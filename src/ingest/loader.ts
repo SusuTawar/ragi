@@ -1,6 +1,6 @@
 // File loader for ingesting documents into the RAG system
 import { stat, readdir, readFile } from "node:fs/promises";
-import { join, relative, extname } from "node:path";
+import { join, relative, extname, basename } from "node:path";
 
 /**
  * Supported file extensions for indexing
@@ -10,11 +10,40 @@ import { join, relative, extname } from "node:path";
 const SUPPORTED_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown',
   '.ts', '.tsx', '.js', '.jsx',
+  '.mjs', '.cjs',
   '.py', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp',
   '.json', '.yaml', '.yml', '.toml', '.xml', '.html', '.htm',
   '.css', '.scss', '.less',
   '.sql', '.sh', '.bash', '.zsh', '.fish',
 ]);
+
+const DEFAULT_IGNORED_DIRECTORIES = new Set([
+  "node_modules",
+  ".git",
+  ".rag",
+  "dist",
+  "build",
+  "coverage",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  "target",
+  "out",
+  "vendor",
+]);
+
+const SOURCE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+  ".py", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
+]);
+
+const SCRIPT_EXTENSIONS = new Set([".sh", ".bash", ".zsh", ".fish"]);
+const STYLE_EXTENSIONS = new Set([".css", ".scss", ".less"]);
+const MARKUP_EXTENSIONS = new Set([".html", ".htm", ".xml"]);
+const DATA_EXTENSIONS = new Set([".json", ".yaml", ".yml", ".toml", ".sql"]);
+const DOC_EXTENSIONS = new Set([".md", ".markdown", ".txt"]);
 
 /**
  * Options for the file loader
@@ -28,6 +57,8 @@ export interface LoaderOptions {
   ignorePatterns?: string[];
   /** Maximum file size in bytes (default: 1MB) */
   maxFileSize?: number;
+  /** Root path for built-in ignore matching; defaults to directoryPath */
+  rootPath?: string;
 }
 
 /**
@@ -46,6 +77,69 @@ export interface LoadedFile {
   extension: string;
   /** Last modified timestamp */
   modifiedTime: number;
+  /** Classified file type for ranking */
+  fileType: FileType;
+  /** Basename of the file */
+  fileName: string;
+}
+
+export type FileType =
+  | "source"
+  | "script"
+  | "config"
+  | "docs"
+  | "markup"
+  | "style"
+  | "data"
+  | "test"
+  | "other";
+
+function normalizeRelativePath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function matchesIgnorePattern(relativePath: string, pattern: string): boolean {
+  const normalizedPath = normalizeRelativePath(relativePath);
+  const normalizedPattern = normalizeRelativePath(pattern).replace(/^\.\/+/, "");
+
+  if (!normalizedPattern) return false;
+  if (normalizedPattern === "*") return true;
+  if (normalizedPattern.endsWith("/")) {
+    const prefix = normalizedPattern.slice(0, -1);
+    return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
+  }
+  if (normalizedPattern.startsWith("*")) {
+    return normalizedPath.endsWith(normalizedPattern.slice(1));
+  }
+  return normalizedPath === normalizedPattern || normalizedPath.includes(`/${normalizedPattern}`);
+}
+
+function matchesDefaultIgnore(relativePathFromRoot: string): boolean {
+  const normalized = normalizeRelativePath(relativePathFromRoot);
+  if (!normalized || normalized === ".") return false;
+
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.some((segment) => DEFAULT_IGNORED_DIRECTORIES.has(segment));
+}
+
+export function classifyFile(relativePath: string, extension: string): FileType {
+  const normalizedPath = normalizeRelativePath(relativePath).toLowerCase();
+  const fileName = basename(normalizedPath);
+
+  if (normalizedPath.includes("/__tests__/") || normalizedPath.endsWith(".test.ts") || normalizedPath.endsWith(".test.js") || normalizedPath.endsWith(".spec.ts") || normalizedPath.endsWith(".spec.js")) {
+    return "test";
+  }
+  if (SOURCE_EXTENSIONS.has(extension)) return "source";
+  if (SCRIPT_EXTENSIONS.has(extension)) return "script";
+  if (STYLE_EXTENSIONS.has(extension)) return "style";
+  if (MARKUP_EXTENSIONS.has(extension)) return "markup";
+  if (DOC_EXTENSIONS.has(extension)) return "docs";
+  if (DATA_EXTENSIONS.has(extension)) {
+    if (fileName.includes("config") || fileName.startsWith(".")) return "config";
+    return "data";
+  }
+  if (fileName.startsWith(".") || fileName.includes("config")) return "config";
+  return "other";
 }
 
 /**
@@ -64,7 +158,8 @@ export async function loadFiles(
     extensions = SUPPORTED_EXTENSIONS,
     ignoreHidden = true,
     maxFileSize = 1024 * 1024, // 1MB default
-    ignorePatterns = []
+    ignorePatterns = [],
+    rootPath = directoryPath
   } = options;
 
   const files: LoadedFile[] = [];
@@ -87,12 +182,16 @@ export async function loadFiles(
 
   const shouldIgnore = (path: string): boolean => {
     const relativePath = relative(projectRoot, path);
+    const relativePathFromRoot = relative(rootPath, path);
+
+    if (matchesDefaultIgnore(relativePathFromRoot)) {
+      return true;
+    }
+
     for (const pattern of allIgnorePatterns) {
-      // Simple glob matching
-      if (pattern === '*') continue;
-      if (pattern.endsWith('/') && relativePath.startsWith(pattern.slice(0, -1))) return true;
-      if (pattern.startsWith('*') && relativePath.endsWith(pattern.slice(1))) return true;
-      if (relativePath === pattern || relativePath.includes('/' + pattern)) return true;
+      if (matchesIgnorePattern(relativePath, pattern)) {
+        return true;
+      }
     }
     return false;
   };
@@ -129,7 +228,8 @@ export async function loadFiles(
           try {
             const fileStat = await stat(fullPath);
             if (fileStat.size > maxFileSize) {
-              console.warn(`Skipping large file: ${fullPath} (${fileStat.size} bytes)`);
+              // Avoid stdout; MCP stdio servers must keep stdout clean.
+              process.stderr.write(`Skipping large file: ${fullPath} (${fileStat.size} bytes)\n`);
               continue;
             }
 
@@ -142,15 +242,17 @@ export async function loadFiles(
               content,
               size: fileStat.size,
               extension: ext,
-              modifiedTime: fileStat.mtimeMs
+              modifiedTime: fileStat.mtimeMs,
+              fileType: classifyFile(relative(projectRoot, fullPath), ext),
+              fileName: entry.name,
             });
           } catch (err) {
-            console.warn(`Could not read file ${fullPath}:`, err);
+            process.stderr.write(`Could not read file ${fullPath}: ${String(err)}\n`);
           }
         }
       }
     } catch (err) {
-      console.warn(`Could not read directory ${dir}:`, err);
+      process.stderr.write(`Could not read directory ${dir}: ${String(err)}\n`);
     }
   };
 

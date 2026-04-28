@@ -26,6 +26,17 @@ export interface TextChunk {
   endIndex: number;
 }
 
+export interface SplitContext {
+  extension?: string;
+}
+
+const CODE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+  ".py", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
+]);
+
+const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+
 /**
  * Split text into chunks based on configuration
  * @param text The text to split
@@ -48,6 +59,24 @@ export function splitText(
   } else {
     return splitTextFixed(text, maxSize, overlap);
   }
+}
+
+export function splitDocument(
+  text: string,
+  options: SplitterOptions,
+  context: SplitContext = {}
+): TextChunk[] {
+  const extension = context.extension?.toLowerCase();
+
+  if (extension && CODE_EXTENSIONS.has(extension)) {
+    return splitCodeText(text, options);
+  }
+
+  if (extension && MARKDOWN_EXTENSIONS.has(extension)) {
+    return splitMarkdown(text, options);
+  }
+
+  return splitText(text, options);
 }
 
 /**
@@ -366,4 +395,122 @@ function splitMarkdownBlocks(text: string): string[] {
   }
   
   return blocks.filter(block => block.trim().length > 0);
+}
+
+function splitCodeText(
+  text: string,
+  options: SplitterOptions
+): TextChunk[] {
+  const { maxSize = 512, overlap = 50 } = options;
+
+  if (text.length <= maxSize) {
+    return [{ text, startIndex: 0, endIndex: text.length }];
+  }
+
+  const anchors = findCodeAnchors(text);
+  if (anchors.length < 2) {
+    return splitText(text, { ...options, recursive: true });
+  }
+
+  const segments: TextChunk[] = [];
+  for (let index = 0; index < anchors.length; index++) {
+    const startIndex = anchors[index];
+    const endIndex = index + 1 < anchors.length ? anchors[index + 1] : text.length;
+    const segmentText = text.slice(startIndex, endIndex);
+
+    if (segmentText.trim()) {
+      segments.push({
+        text: segmentText,
+        startIndex,
+        endIndex,
+      });
+    }
+  }
+
+  return packStructuredSegments(segments, maxSize, overlap, options);
+}
+
+function findCodeAnchors(text: string): number[] {
+  const anchors = new Set<number>([0]);
+  const codeBoundaryPattern = /^\s*(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_][A-Za-z0-9_]*|^\s*(?:export\s+)?class\s+[A-Za-z_][A-Za-z0-9_]*|^\s*(?:export\s+)?(?:interface|type|enum)\s+[A-Za-z_][A-Za-z0-9_]*|^\s*(?:export\s+)?const\s+[A-Za-z_][A-Za-z0-9_]*\s*=|^\s*import\s.+|^\s*#.{1,}$/gm;
+  let match: RegExpExecArray | null;
+
+  while ((match = codeBoundaryPattern.exec(text)) !== null) {
+    anchors.add(match.index);
+  }
+
+  return Array.from(anchors).sort((left, right) => left - right);
+}
+
+function packStructuredSegments(
+  segments: TextChunk[],
+  maxSize: number,
+  overlap: number,
+  options: SplitterOptions
+): TextChunk[] {
+  const chunks: TextChunk[] = [];
+  let currentChunk: TextChunk | null = null;
+
+  const flushCurrentChunk = () => {
+    if (currentChunk && currentChunk.text.trim()) {
+      chunks.push(currentChunk);
+    }
+    currentChunk = null;
+  };
+
+  for (const segment of segments) {
+    if (segment.text.length > maxSize) {
+      flushCurrentChunk();
+      const subChunks = splitText(segment.text, {
+        ...options,
+        recursive: true,
+      });
+      for (const subChunk of subChunks) {
+        chunks.push({
+          text: subChunk.text,
+          startIndex: segment.startIndex + subChunk.startIndex,
+          endIndex: segment.startIndex + subChunk.endIndex,
+        });
+      }
+      continue;
+    }
+
+    if (!currentChunk) {
+      currentChunk = { ...segment };
+      continue;
+    }
+
+    if (currentChunk.text.length + segment.text.length > maxSize) {
+      flushCurrentChunk();
+      currentChunk = { ...segment };
+      continue;
+    }
+
+    currentChunk = {
+      text: currentChunk.text + segment.text,
+      startIndex: currentChunk.startIndex,
+      endIndex: segment.endIndex,
+    };
+  }
+
+  flushCurrentChunk();
+
+  if (overlap <= 0 || chunks.length < 2) {
+    return chunks;
+  }
+
+  const overlappedChunks: TextChunk[] = [chunks[0]];
+  for (let index = 1; index < chunks.length; index++) {
+    const previousChunk = overlappedChunks[index - 1];
+    const current = chunks[index];
+    const overlapText = previousChunk.text.slice(-Math.min(overlap, previousChunk.text.length));
+
+    overlappedChunks.push({
+      text: overlapText + current.text,
+      startIndex: Math.max(0, current.startIndex - overlapText.length),
+      endIndex: current.endIndex,
+    });
+  }
+
+  return overlappedChunks;
 }

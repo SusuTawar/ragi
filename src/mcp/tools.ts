@@ -1,15 +1,17 @@
 import { 
   CallToolRequestSchema, 
   ListToolsRequestSchema,
-  Tool as McpTool,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js";
 import { createIngestionPipeline } from "../ingest/pipeline.js";
+import type { SqliteAdapter } from "../adapters/sqlite.js";
 import { loadConfig } from "../core/config.js";
 import { createProjectContext } from "../core/project.js";
+import { rerankSearchResults } from "../core/search.js";
 
 // Helper to safely get error message
 function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return getErrorMessage(error);
+  if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   return String(error);
 }
@@ -79,6 +81,7 @@ export const ragListProjectsTool: McpTool = {
 
 // Handler for rag_index tool
 export async function ragIndexHandler(args: any) {
+  let pipeline: Awaited<ReturnType<typeof createIngestionPipeline>> | null = null;
   try {
     const { projectPath, paths = [] } = args;
     
@@ -89,7 +92,7 @@ export async function ragIndexHandler(args: any) {
     const projectContext = await createProjectContext(projectPath);
     
     // Create ingestion pipeline
-    const pipeline = await createIngestionPipeline(projectPath, config);
+    pipeline = await createIngestionPipeline(projectPath, config);
     
     // Index specific paths or entire project
     if (paths.length > 0) {
@@ -119,11 +122,14 @@ export async function ragIndexHandler(args: any) {
       ],
       isError: true
     };
+  } finally {
+    pipeline?.close();
   }
 }
 
 // Handler for rag_search tool
 export async function ragSearchHandler(args: any) {
+  let vectorStore: SqliteAdapter | null = null;
   try {
     const { query, projectPath, limit = 10 } = args;
     
@@ -140,7 +146,7 @@ export async function ragSearchHandler(args: any) {
     const modelName = config.embedding?.model || 'Xenova/all-MiniLM-L6-v2';
     const dimension = modelName.includes('all-MiniLM') ? 384 : 768;
     
-    const vectorStore = new SqliteAdapter(
+    vectorStore = new SqliteAdapter(
       projectContext.id,
       projectContext.dbPath,
       dimension
@@ -156,11 +162,12 @@ export async function ragSearchHandler(args: any) {
     const queryEmbeddingResult = await embedder.embed(query);
     const queryEmbedding = queryEmbeddingResult.embedding;
     
-    // Search vector store
-    const results = await vectorStore.search(queryEmbedding, limit);
+    const candidateLimit = Math.min(Math.max(limit * 8, 50), 200);
+    const results = await vectorStore.search(queryEmbedding, candidateLimit);
+    const rerankedResults = rerankSearchResults(query, results, limit);
     
     // Format results
-    const formattedResults = results.map((result, index) => {
+    const formattedResults = rerankedResults.map((result, index) => {
       return {
         id: `${index + 1}`,
         content: result.document,
@@ -194,6 +201,8 @@ export async function ragSearchHandler(args: any) {
       ],
       isError: true
     };
+  } finally {
+    vectorStore?.close();
   }
 }
 
