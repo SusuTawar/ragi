@@ -1,6 +1,6 @@
 // Test that all embedding providers are available in the interface
-import { Embedder } from "../embedder";
-import { Config } from "../config";
+import { Embedder } from "../embedder.js";
+import type { Config } from "../config.js";
 
 test("embedder accepts all three providers in config", () => {
   const ollamaConfig: Config = {

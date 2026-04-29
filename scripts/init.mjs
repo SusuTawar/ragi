@@ -210,6 +210,14 @@ function getDefaultGlobalConfig() {
       provider: 'transformers_js',
       model: 'Xenova/all-MiniLM-L6-v2',
     },
+    providers: {
+      ollama: {
+        baseUrl: 'http://localhost:11434',
+      },
+      llama_cpp: {
+        baseUrl: 'http://localhost:8080',
+      },
+    },
     chunking: { maxSize: 512, overlap: 50 },
   };
 }
@@ -250,6 +258,28 @@ function validateRagiConfigShape(parsed) {
     }
     if ('baseUrl' in parsed.embedding && typeof parsed.embedding.baseUrl !== 'string') {
       return { valid: false, reason: 'embedding.baseUrl must be a string' };
+    }
+  }
+
+  if ('providers' in parsed) {
+    if (!parsed.providers || typeof parsed.providers !== 'object' || Array.isArray(parsed.providers)) {
+      return { valid: false, reason: 'providers must be an object' };
+    }
+
+    const providerKeys = ['ollama', 'llama_cpp'];
+    for (const providerKey of providerKeys) {
+      if (!(providerKey in parsed.providers)) {
+        continue;
+      }
+
+      const providerConfig = parsed.providers[providerKey];
+      if (!providerConfig || typeof providerConfig !== 'object' || Array.isArray(providerConfig)) {
+        return { valid: false, reason: `providers.${providerKey} must be an object` };
+      }
+
+      if ('baseUrl' in providerConfig && typeof providerConfig.baseUrl !== 'string') {
+        return { valid: false, reason: `providers.${providerKey}.baseUrl must be a string` };
+      }
     }
   }
 
@@ -1042,6 +1072,7 @@ export async function maybeScaffoldGlobalConfig(options = {}) {
       logger(`\nGlobal ragi config not found at ${status.filePath}.`);
       logger('Create it to customize runtime defaults when needed:');
       logger(scaffoldLabel);
+      logger('Recommended embedding models: ollama -> nomic-embed-text, transformers_js -> Xenova/all-MiniLM-L6-v2, llama_cpp -> an embedding-capable model served by your llama.cpp instance.');
       return { action: 'printed', filePath: status.filePath, reason: 'missing' };
     }
 
@@ -1345,6 +1376,7 @@ MCP registration is global by default; repo-local MCP config is treated as an ad
 Unsupported agents receive manual MCP registration instructions instead of automatic file edits.
 Init also checks ~/.config/ragi/config.json and can scaffold it when missing or invalid.
 .ragrc remains an optional project override for repo-specific runtime settings.
+Recommended embedding models: ollama -> nomic-embed-text, transformers_js -> Xenova/all-MiniLM-L6-v2, llama_cpp -> an embedding-capable model served by your llama.cpp instance.
   
 Supported agents:
 ${Object.entries(AGENTS).map(([id, a]) => `  ${id.padEnd(12)} ${a.name}`).join('\n')}`);

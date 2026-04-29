@@ -34,6 +34,14 @@ export class PathTraversalError extends Error {
  * @throws PathTraversalError if path attempts to escape allowed directories
  */
 export function sanitizePath(inputPath: string): string {
+  const normalizedInput = inputPath.replace(/\\/g, "/");
+  const pathSegments = normalizedInput.split("/").filter(Boolean);
+  if (pathSegments.includes("..")) {
+    throw new PathTraversalError(
+      `Path traversal detected: ${inputPath} contains ".." which is not allowed`
+    );
+  }
+
   // Convert to absolute path
   const absPath = isAbsolute(inputPath) 
     ? resolve(inputPath) 
@@ -41,14 +49,6 @@ export function sanitizePath(inputPath: string): string {
 
   // Normalize path separators
   const normalized = absPath.replace(/[/\\]+/g, sep);
-
-  // Security check: prevent directory traversal attempts (..)
-  // This allows any absolute path, but blocks explicit .. escapes
-  if (absPath.includes('..')) {
-    throw new PathTraversalError(
-      `Path traversal detected: ${inputPath} contains ".." which is not allowed`
-    );
-  }
 
   return normalized;
 }

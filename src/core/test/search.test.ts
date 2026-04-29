@@ -1,4 +1,4 @@
-import { rerankSearchResults } from "../search";
+import { rerankSearchResults } from "../search.js";
 
 test("rerankSearchResults prefers exact source matches over noisy dependency hits", () => {
   const results = rerankSearchResults(

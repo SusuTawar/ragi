@@ -1,11 +1,11 @@
 // Ingestion pipeline for processing documents into the RAG system
-import { Embedder } from "../core/embedder";
-import { SqliteAdapter } from "../adapters/sqlite";
-import type { ProjectContext } from "../core/project";
-import { classifyFile, loadFiles } from "./loader";
-import type { LoadedFile, LoaderOptions } from "./loader";
-import { splitDocument } from "./splitter";
-import type { SplitterOptions } from "./splitter";
+import { Embedder } from "../core/embedder.js";
+import { SqliteAdapter } from "../adapters/sqlite.js";
+import type { ProjectContext } from "../core/project.js";
+import { classifyFile, loadFiles } from "./loader.js";
+import type { LoadedFile, LoaderOptions } from "./loader.js";
+import { splitDocument } from "./splitter.js";
+import type { SplitterOptions } from "./splitter.js";
 import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, extname, relative, resolve } from "node:path";

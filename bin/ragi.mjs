@@ -13,53 +13,46 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 
 const command = args[0] || 'start';
+const nodeExecutable = process.execPath;
+
+function runNodeScript(scriptPath, scriptArgs = [], errorLabel = "run command") {
+  const proc = spawn(nodeExecutable, [scriptPath, ...scriptArgs], {
+    stdio: 'inherit',
+    env: process.env
+  });
+  proc.on('exit', (code) => process.exit(code || 0));
+  proc.on('error', (err) => {
+    console.error(`Failed to ${errorLabel}: ${err.message}`);
+    process.exit(1);
+  });
+}
 
 const commands = {
   start: async () => {
-    const serverPath = join(__dirname, '../src/mcp/server.ts');
-    const proc = spawn('bun', [serverPath], {
-      stdio: 'inherit',
-      env: process.env
-    });
-    proc.on('exit', (code) => process.exit(code || 0));
-    proc.on('error', (err) => {
-      console.error(`Failed to start: ${err.message}`);
+    const serverPath = join(__dirname, '../dist/mcp/server.js');
+    if (!existsSync(serverPath)) {
+      console.error('Built server not found. Run: npm run build');
       process.exit(1);
-    });
+    }
+    runNodeScript(serverPath, [], 'start');
   },
   
   init: async () => {
     const initPath = join(__dirname, '../scripts/init.mjs');
     if (!existsSync(initPath)) {
-      console.error('Init script not found. Run: bun install');
+      console.error('Init script not found. Reinstall the package or run: npm install');
       process.exit(1);
     }
-    const proc = spawn('bun', [initPath, ...args.slice(1)], {
-      stdio: 'inherit',
-      env: process.env
-    });
-    proc.on('exit', (code) => process.exit(code || 0));
-    proc.on('error', (err) => {
-      console.error(`Failed to run init: ${err.message}`);
-      process.exit(1);
-    });
+    runNodeScript(initPath, args.slice(1), 'run init');
   },
   
   check: async () => {
     const initPath = join(__dirname, '../scripts/init.mjs');
     if (!existsSync(initPath)) {
-      console.error('Init script not found. Run: bun install');
+      console.error('Init script not found. Reinstall the package or run: npm install');
       process.exit(1);
     }
-    const proc = spawn('bun', [initPath, '--check'], {
-      stdio: 'inherit',
-      env: process.env
-    });
-    proc.on('exit', (code) => process.exit(code || 0));
-    proc.on('error', (err) => {
-      console.error(`Failed to run check: ${err.message}`);
-      process.exit(1);
-    });
+    runNodeScript(initPath, ['--check'], 'run check');
   },
   
   help: async () => {

@@ -141,19 +141,19 @@ function splitTextRecursive(
       let currentIndex = 0;
       
       for (let i = 0; i < splits.length; i++) {
-        const split = splits[i];
+        const split = splits[i]!;
         const splitWithSep = i < splits.length - 1 ? split + separator : split;
         const splitLength = splitWithSep.length;
         
         // If adding this split would exceed maxSize, create a chunk
         if (chunks.length === 0 || 
-            chunks[chunks.length - 1].text.length + splitLength > maxSize) {
+            chunks[chunks.length - 1]!.text.length + splitLength > maxSize) {
           
           // If we have text in the current chunk, finalize it
-          if (chunks.length > 0 && chunks[chunks.length - 1].text.length > 0) {
+          if (chunks.length > 0 && chunks[chunks.length - 1]!.text.length > 0) {
             // Add overlap from previous chunk if configured
             if (overlap > 0 && chunks.length > 0) {
-              const prevChunk = chunks[chunks.length - 1];
+              const prevChunk = chunks[chunks.length - 1]!;
               const overlapText = prevChunk.text.slice(-overlap);
               chunks.push({
                 text: overlapText + splitWithSep,
@@ -181,7 +181,7 @@ function splitTextRecursive(
         } else {
           // Add to current chunk
           if (chunks.length > 0) {
-            const lastChunk = chunks[chunks.length - 1];
+            const lastChunk = chunks[chunks.length - 1]!;
             lastChunk.text += splitWithSep;
             lastChunk.endIndex = currentIndex + splitLength;
           } else {
@@ -199,8 +199,8 @@ function splitTextRecursive(
       // Handle overlap between chunks
       if (overlap > 0 && chunks.length > 1) {
         for (let i = 1; i < chunks.length; i++) {
-          const prevChunk = chunks[i - 1];
-          const currChunk = chunks[i];
+          const prevChunk = chunks[i - 1]!;
+          const currChunk = chunks[i]!;
           
           // Get overlap from end of previous chunk
           const overlapText = prevChunk.text.slice(-Math.min(overlap, prevChunk.text.length));
@@ -319,7 +319,7 @@ function splitMarkdownBlocks(text: string): string[] {
   const lines = text.split("\n");
   
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i]!;
     
     // Handle code blocks
     if (line.trim().startsWith("```")) {
@@ -378,7 +378,7 @@ function splitMarkdownBlocks(text: string): string[] {
       currentBlock += line + "\n";
       
       // Double newline indicates paragraph break
-      if (line.trim() === "" && i < lines.length - 1 && lines[i + 1].trim() === "") {
+      if (line.trim() === "" && i < lines.length - 1 && lines[i + 1]!.trim() === "") {
         if (currentBlock.trim()) {
           blocks.push(currentBlock);
           currentBlock = "";
@@ -414,8 +414,8 @@ function splitCodeText(
 
   const segments: TextChunk[] = [];
   for (let index = 0; index < anchors.length; index++) {
-    const startIndex = anchors[index];
-    const endIndex = index + 1 < anchors.length ? anchors[index + 1] : text.length;
+    const startIndex = anchors[index]!;
+    const endIndex = index + 1 < anchors.length ? anchors[index + 1]! : text.length;
     const segmentText = text.slice(startIndex, endIndex);
 
     if (segmentText.trim()) {
@@ -499,10 +499,10 @@ function packStructuredSegments(
     return chunks;
   }
 
-  const overlappedChunks: TextChunk[] = [chunks[0]];
+  const overlappedChunks: TextChunk[] = [chunks[0]!];
   for (let index = 1; index < chunks.length; index++) {
-    const previousChunk = overlappedChunks[index - 1];
-    const current = chunks[index];
+    const previousChunk = overlappedChunks[index - 1]!;
+    const current = chunks[index]!;
     const overlapText = previousChunk.text.slice(-Math.min(overlap, previousChunk.text.length));
 
     overlappedChunks.push({

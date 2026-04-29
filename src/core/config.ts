@@ -11,8 +11,24 @@ export interface Config {
   sqlite: { path: string };
   embedding: {
     provider: 'ollama' | 'transformers_js' | 'llama_cpp';
+    /**
+     * Recommended models by provider:
+     * - ollama: `nomic-embed-text`
+     * - transformers_js: `Xenova/all-MiniLM-L6-v2`
+     * - llama_cpp: an embedding-capable GGUF model exposed by your llama.cpp server
+     */
     model: string;
     baseUrl?: string;
+  };
+  providers?: {
+    ollama?: {
+      /** Usually paired with model `nomic-embed-text`. */
+      baseUrl?: string;
+    };
+    llama_cpp?: {
+      /** Pair with an embedding-capable model loaded by your llama.cpp server. */
+      baseUrl?: string;
+    };
   };
   chunking: { maxSize: number; overlap: number };
 }
@@ -26,6 +42,14 @@ const DEFAULT_CONFIG: Config = {
   embedding: {
     provider: 'transformers_js',
     model: 'Xenova/all-MiniLM-L6-v2',
+  },
+  providers: {
+    ollama: {
+      baseUrl: 'http://localhost:11434',
+    },
+    llama_cpp: {
+      baseUrl: 'http://localhost:8080',
+    },
   },
   chunking: { maxSize: 512, overlap: 50 },
 };
@@ -71,18 +95,26 @@ export async function loadConfig(): Promise<Config> {
     }
   }
 
-  // Override with environment variables if present (RAGI_* primary, BUN_RAG_* fallback)
-  const vectorStore = process.env.RAGI_VECTOR_STORE || process.env.BUN_RAG_VECTOR_STORE;
+  // Override with environment variables if present
+  const vectorStore = process.env.RAGI_VECTOR_STORE;
   if (vectorStore) config.vectorStore = vectorStore as Config['vectorStore'];
   
-  const provider = process.env.RAGI_EMBEDDING_PROVIDER || process.env.BUN_RAG_EMBEDDING_PROVIDER;
+  const provider = process.env.RAGI_EMBEDDING_PROVIDER;
   if (provider) config.embedding.provider = provider as Config['embedding']['provider'];
   
-  const model = process.env.RAGI_EMBEDDING_MODEL || process.env.BUN_RAG_EMBEDDING_MODEL;
+  const model = process.env.RAGI_EMBEDDING_MODEL;
   if (model) config.embedding.model = model;
   
-  const baseUrl = process.env.RAGI_EMBEDDING_BASE_URL || process.env.BUN_RAG_EMBEDDING_BASE_URL;
+  const baseUrl = process.env.RAGI_EMBEDDING_BASE_URL;
   if (baseUrl) config.embedding.baseUrl = baseUrl;
+  
+  if (!config.embedding.baseUrl) {
+    if (config.embedding.provider === 'ollama') {
+      config.embedding.baseUrl = config.providers?.ollama?.baseUrl;
+    } else if (config.embedding.provider === 'llama_cpp') {
+      config.embedding.baseUrl = config.providers?.llama_cpp?.baseUrl;
+    }
+  }
 
   return config;
 }

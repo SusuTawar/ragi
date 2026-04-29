@@ -1,5 +1,5 @@
 // Tests for the base adapter interface
-import { SqliteAdapter } from "../sqlite";
+import { SqliteAdapter } from "../sqlite.js";
 
 test("SqliteAdapter can be instantiated", () => {
   const adapter = new SqliteAdapter("test-project", ":memory:", 384);

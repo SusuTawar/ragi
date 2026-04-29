@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadFiles } from "../loader";
+import { loadFiles } from "../loader.js";
 
 test("loadFiles returns empty array for non-existent directory", async () => {
   const files = await loadFiles("nonexistent-dir-xyz", process.cwd(), {});

@@ -1,5 +1,5 @@
-import { sanitizePath, generateProjectId, isPathAllowed, createProjectContext, PathTraversalError } from "../project";
-import { join, resolve } from "node:path";
+import { sanitizePath, generateProjectId, isPathAllowed, PathTraversalError } from "../project.js";
+import { join, resolve, sep } from "node:path";
 
 test("sanitizes absolute paths correctly", () => {
   const input = resolve(process.cwd(), "tmp/test");
@@ -12,8 +12,10 @@ test("prevents directory traversal with explicit ..", () => {
 });
 
 test("allows any absolute path without ..", () => {
-  expect(sanitizePath("/usr/local/project")).toBe("/usr/local/project");
-  expect(sanitizePath("/home/user/my-project")).toBe("/home/user/my-project");
+  const projectOne = resolve(sep, "usr", "local", "project");
+  const projectTwo = resolve(sep, "home", "user", "my-project");
+  expect(sanitizePath(projectOne)).toBe(projectOne);
+  expect(sanitizePath(projectTwo)).toBe(projectTwo);
 });
 
 test("allows paths within workspace", () => {

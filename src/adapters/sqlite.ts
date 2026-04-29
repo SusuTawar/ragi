@@ -1,7 +1,7 @@
 // SQLite adapter using sqlite-vec for vector storage
-import Database from "bun:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { load } from "sqlite-vec";
-import type { VectorStoreAdapter } from "./base";
+import type { VectorStoreAdapter } from "./base.js";
 import { dirname } from "node:path";
 import { access, constants, mkdir } from "node:fs/promises";
 
@@ -13,11 +13,13 @@ export interface IndexedFileRecord {
   fileType: string;
 }
 
+type SqlRowIdRow = { rowid: number | bigint };
+
 /**
  * SQLite adapter for vector storage using sqlite-vec
  */
 export class SqliteAdapter implements VectorStoreAdapter {
-  private db!: Database;
+  private db!: DatabaseSync;
   private readonly projectId: string;
   private readonly dbPath: string;
   private readonly dimensionValue: number;
@@ -41,15 +43,10 @@ export class SqliteAdapter implements VectorStoreAdapter {
       await mkdir(dir, { recursive: true });
     }
 
-    if (process.platform === "darwin") {
-      try {
-        Database.setCustomSQLite("/opt/homebrew/lib/libsqlite3.dylib");
-      } catch (err) {
-        process.stderr.write(`Could not set custom SQLite path: ${String(err)}\n`);
-      }
-    }
-
-    this.db = new Database(this.dbPath);
+    this.db = new DatabaseSync(this.dbPath, {
+      allowExtension: true,
+      enableForeignKeyConstraints: true,
+    });
 
     try {
       load(this.db);
@@ -99,7 +96,7 @@ export class SqliteAdapter implements VectorStoreAdapter {
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
-    const pragma = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    const pragma = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     const hasColumn = pragma.some((entry) => entry.name === column);
     if (!hasColumn) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -110,6 +107,10 @@ export class SqliteAdapter implements VectorStoreAdapter {
     if (!this.initialized) {
       throw new Error("Adapter not initialized. Call init() first.");
     }
+  }
+
+  private normalizeVecRowId(rowid: number | bigint): bigint {
+    return typeof rowid === "bigint" ? rowid : BigInt(rowid);
   }
 
   async add(
@@ -143,13 +144,13 @@ export class SqliteAdapter implements VectorStoreAdapter {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    this.db.transaction(() => {
+    this.withTransaction(() => {
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i]!;
         const embedding = embeddings[i]!;
         const document = documents[i]!;
         const docMetadata = normalizedMetadata[i] ?? {};
-        const oldRow = this.db.prepare(`SELECT rowid FROM documents WHERE id = ?`).get(id) as { rowid: number } | undefined;
+        const oldRow = this.db.prepare(`SELECT rowid FROM documents WHERE id = ?`).get(id) as SqlRowIdRow | undefined;
 
         insertDoc.run(
           id,
@@ -167,15 +168,15 @@ export class SqliteAdapter implements VectorStoreAdapter {
           this.db.prepare(`DELETE FROM vec_documents WHERE rowid = ?`).run(oldRow.rowid);
         }
 
-        const newRow = this.db.prepare(`SELECT rowid FROM documents WHERE id = ?`).get(id) as { rowid: number } | undefined;
+        const newRow = this.db.prepare(`SELECT rowid FROM documents WHERE id = ?`).get(id) as SqlRowIdRow | undefined;
         if (newRow) {
           this.db.prepare(`INSERT INTO vec_documents(rowid, embedding) VALUES (?, ?)`).run(
-            newRow.rowid,
+            this.normalizeVecRowId(newRow.rowid),
             new Float32Array(embedding)
           );
         }
       }
-    })();
+    });
   }
 
   async search(
@@ -352,7 +353,7 @@ export class SqliteAdapter implements VectorStoreAdapter {
       FROM documents
       WHERE project_id = ? AND COALESCE(file_path, json_extract(metadata, '$.filePath')) IN (${placeholders})
     `);
-    const rows = getRows.all(this.projectId, ...filePaths) as Array<{ rowid: number }>;
+    const rows = getRows.all(this.projectId, ...filePaths) as SqlRowIdRow[];
 
     this.db.prepare(`
       DELETE FROM documents
@@ -362,7 +363,7 @@ export class SqliteAdapter implements VectorStoreAdapter {
     if (rows.length > 0) {
       const vecPlaceholders = rows.map(() => "?").join(",");
       this.db.prepare(`DELETE FROM vec_documents WHERE rowid IN (${vecPlaceholders})`).run(
-        ...rows.map((row) => row.rowid)
+        ...rows.map((row) => this.normalizeVecRowId(row.rowid))
       );
     }
 
@@ -377,14 +378,14 @@ export class SqliteAdapter implements VectorStoreAdapter {
 
     const placeholders = ids.map(() => "?").join(",");
     const getRows = this.db.prepare(`SELECT rowid FROM documents WHERE id IN (${placeholders}) AND project_id = ?`);
-    const rows = getRows.all(...ids, this.projectId) as Array<{ rowid: number }>;
+    const rows = getRows.all(...ids, this.projectId) as SqlRowIdRow[];
 
     this.db.prepare(`DELETE FROM documents WHERE id IN (${placeholders}) AND project_id = ?`).run(...ids, this.projectId);
 
     if (rows.length > 0) {
       const vecPlaceholders = rows.map(() => "?").join(",");
       this.db.prepare(`DELETE FROM vec_documents WHERE rowid IN (${vecPlaceholders})`).run(
-        ...rows.map((row) => row.rowid)
+        ...rows.map((row) => this.normalizeVecRowId(row.rowid))
       );
     }
   }
@@ -404,6 +405,19 @@ export class SqliteAdapter implements VectorStoreAdapter {
   close(): void {
     if (this.db) {
       this.db.close();
+    }
+  }
+
+  private withTransaction(fn: () => void): void {
+    this.db.exec("BEGIN");
+    try {
+      fn();
+      this.db.exec("COMMIT");
+    } catch (error) {
+      if (this.db.isTransaction) {
+        this.db.exec("ROLLBACK");
+      }
+      throw error;
     }
   }
 }

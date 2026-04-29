@@ -1,5 +1,5 @@
 // Local embedding service supporting Ollama API and Transformers.js
-import { Config } from "./config";
+import type { Config } from "./config.js";
 
 /**
  * Embedding result
@@ -9,6 +9,15 @@ export interface EmbeddingResult {
   embedding: number[];
   /** Token count used */
   tokensUsed?: number;
+}
+
+interface OllamaEmbeddingResponse {
+  embedding?: number[];
+  prompt_eval_count?: number;
+}
+
+interface LlamaCppEmbeddingResponse {
+  embedding?: number[];
 }
 
 /**
@@ -33,7 +42,7 @@ export class Embedder {
       const entries = Array.from(this.cache.entries());
       const toRemove = Math.floor(entries.length * 0.25);
       for (let i = 0; i < toRemove; i++) {
-        this.cache.delete(entries[i][0]);
+        this.cache.delete(entries[i]![0]);
       }
     }
   }
@@ -93,7 +102,7 @@ export class Embedder {
       throw new Error(`Ollama embedding failed: ${response.status} ${errorText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as OllamaEmbeddingResponse;
     
     if (!data.embedding) {
       throw new Error('No embedding returned from Ollama');
@@ -106,7 +115,7 @@ export class Embedder {
   }
 
   /**
-   * Generate embeddings using Transformers.js (runs natively in Bun)
+   * Generate embeddings using Transformers.js
    */
   private async embedTransformersJs(text: string): Promise<EmbeddingResult> {
     // Lazy load the model when first needed
@@ -134,7 +143,7 @@ export class Embedder {
       });
 
       // Extract the embedding data
-      const embeddingData = Array.from(output.data);
+      const embeddingData = Array.from(output.data as ArrayLike<number>);
       
       return {
         embedding: embeddingData,
@@ -166,7 +175,7 @@ export class Embedder {
       throw new Error(`Llama.cpp embedding failed: ${response.status} ${errorText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as LlamaCppEmbeddingResponse;
     
     // llama.cpp /embedding returns { embedding: [...] }
     if (!data.embedding) {

@@ -1,6 +1,6 @@
 // Test text splitter functionality
-import { Embedder } from "../embedder";
-import { Config } from "../config";
+import { Embedder } from "../embedder.js";
+import type { Config } from "../config.js";
 
 test("embedder initializes with config", () => {
   const config: Config = {

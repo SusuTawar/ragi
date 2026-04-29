@@ -2,17 +2,30 @@
 
 Local-first RAG indexing and semantic search MCP server.
 
+Requires Node 22 or newer.
+
+Published/runtime usage is Node-first. Maintainers can still use Bun locally if they prefer, for example `bun install` and `bun run <script>`.
+
 ## Quick Start
 
 ```bash
 # Install dependencies
-bun install
+npm install
 
-# Start MCP server
-bun run src/mcp/server.ts
+# Build and start MCP server
+npm run build
+npm start
 
 # Or use npx
 npx ragi
+```
+
+If you prefer Bun locally, the equivalent maintainer flow still works:
+
+```bash
+bun install
+bun run build
+bun run test
 ```
 
 ## Usage
@@ -49,11 +62,27 @@ Use a project `.ragrc` only when this repo needs to override the global `ragi` d
   "embedding": {
     "provider": "transformers_js",
     "model": "Xenova/all-MiniLM-L6-v2"
+  },
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434"
+    },
+    "llama_cpp": {
+      "baseUrl": "http://localhost:8080"
+    }
   }
 }
 ```
 
+Recommended model choices by provider:
+- `ollama`: `nomic-embed-text`
+- `transformers_js`: `Xenova/all-MiniLM-L6-v2`
+- `llama_cpp`: an embedding-capable model served by your llama.cpp instance
+
+The `providers.*.baseUrl` values control where `ragi` looks for each local service. When `embedding.provider` is `ollama` or `llama_cpp` and `embedding.baseUrl` is unset, `ragi` uses the matching provider-specific `baseUrl` from the global config.
+
 Or use environment variables (RAGI_* takes precedence):
-- `RAGI_EMBEDDING_PROVIDER` (or `BUN_RAG_EMBEDDING_PROVIDER`)
-- `RAGI_EMBEDDING_MODEL` (or `BUN_RAG_EMBEDDING_MODEL`)
-- `RAGI_EMBEDDING_BASE_URL` (or `BUN_RAG_EMBEDDING_BASE_URL`)
+- `RAGI_VECTOR_STORE`
+- `RAGI_EMBEDDING_PROVIDER`
+- `RAGI_EMBEDDING_MODEL`
+- `RAGI_EMBEDDING_BASE_URL`

@@ -1,6 +1,6 @@
-import { loadConfig } from "../config";
-import { sanitizePath, createProjectContext } from "../project";
-import { createEmbedder } from "../embedder";
+import { loadConfig } from "../config.js";
+import { sanitizePath, createProjectContext } from "../project.js";
+import { createEmbedder } from "../embedder.js";
 
 test("core modules integrate correctly", async () => {
   // Load config

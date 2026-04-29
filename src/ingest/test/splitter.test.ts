@@ -1,5 +1,5 @@
 // Test text splitter functionality
-import { splitDocument, splitText } from "../splitter";
+import { splitDocument, splitText } from "../splitter.js";
 
 test("splitText basic functionality", () => {
   const text = "This is a test string for splitting.";

@@ -1,7 +1,7 @@
-# dependencies (bun install)
+# dependencies
 node_modules
 
-# output
+# build output
 out
 dist
 *.tgz
@@ -21,10 +21,12 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+.release-check
 
 # caches
 .eslintcache
 .cache
+.tmp/
 *.tsbuildinfo
 
 # IntelliJ based IDEs
