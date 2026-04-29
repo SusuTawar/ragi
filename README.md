@@ -28,9 +28,21 @@ npx ragi init --global
 npx ragi init --check
 ```
 
+`npx ragi init` now:
+- asks which agent(s) are used in the current project,
+- checks whether the installed `ragi` skill is missing, current, or outdated before copying,
+- checks whether `ragi` is already registered with the selected agent host(s) before offering MCP setup,
+- checks `~/.config/ragi/config.json` and can scaffold it when missing or invalid,
+- prefers global/user MCP registration by default when the agent's config format is supported,
+- falls back to printing manual MCP registration instructions for unsupported agents.
+
+`--force` overwrites outdated installed skills during `init`. Without `--force`, interactive runs ask before updating and non-interactive runs leave stale installs untouched.
+
 ## Configuration
 
-Create a `.ragrc` file in your project:
+The default runtime config lives at `~/.config/ragi/config.json`.
+
+Use a project `.ragrc` only when this repo needs to override the global `ragi` defaults:
 
 ```json
 {
