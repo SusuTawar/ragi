@@ -11,7 +11,7 @@ import { ragIndexHandler, ragSearchHandler, ragListProjectsHandler } from "./too
 const server = new Server(
   {
     name: "ragi",
-    version: "0.1.1",
+    version: "0.1.2",
   },
   {
     capabilities: {

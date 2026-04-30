@@ -232,7 +232,7 @@ function assertPackDryRun() {
     "package.json",
     "README.md",
     "CHANGELOG.md",
-    "bin/ragi.mjs",
+    "bin/ragi.js",
     "scripts/init.mjs",
     "scripts/release-checks.mjs",
     "dist/mcp/server.js",

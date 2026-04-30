@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // Package info
 const PACKAGE_NAME = '@susutawar/ragi';
 const BIN_NAME = 'ragi';
-const PKG_VERSION = '0.1.1';
+const PKG_VERSION = '0.1.2';
 const SKILL_NAME = 'ragi';
 const GLOBAL_PROJECTS_DIR = join(homedir(), '.ragi', 'projects');
 const GLOBAL_CONFIG_DIR = join('.config', BIN_NAME);

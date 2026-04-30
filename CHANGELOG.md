@@ -4,6 +4,10 @@ All notable changes to `ragi` will be documented in this file.
 
 The format is based on Keep a Changelog and uses lightweight semver tags.
 
+## [0.1.2] - 2026-05-01
+
+- Fix init script doesnt work on windows
+
 ## [0.1.1] - 2026-04-30
 
 - Fix package rename fallout so generated `npx` and MCP registration snippets use `@susutawar/ragi` while the CLI/MCP server name remains `ragi`.
