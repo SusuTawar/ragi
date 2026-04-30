@@ -13,6 +13,8 @@ permissions:
 jobs:
   dependency-security:
     runs-on: ubuntu-latest
+    env:
+      SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
 
     steps:
       - name: Checkout
@@ -35,11 +37,9 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: Install Socket CLI
-        if: ${{ secrets.SOCKET_SECURITY_API_KEY != '' }}
+        if: ${{ env.SOCKET_SECURITY_API_KEY != '' }}
         run: pip install socketsecurity --upgrade
 
       - name: Run Socket scan
-        if: ${{ secrets.SOCKET_SECURITY_API_KEY != '' }}
-        env:
-          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+        if: ${{ env.SOCKET_SECURITY_API_KEY != '' }}
         run: socketci
