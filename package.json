@@ -1,10 +1,10 @@
 {
   "name": "@susutawar/ragi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-first RAG indexing and semantic search MCP server",
   "type": "module",
   "bin": {
-    "ragi": "./bin/ragi.mjs"
+    "ragi": "./bin/ragi.js"
   },
   "engines": {
     "node": ">=22"
