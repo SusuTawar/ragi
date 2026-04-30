@@ -54,6 +54,21 @@ const DEFAULT_CONFIG: Config = {
   chunking: { maxSize: 512, overlap: 50 },
 };
 
+function cloneDefaultConfig(): Config {
+  return {
+    vectorStore: DEFAULT_CONFIG.vectorStore,
+    sqlite: { ...DEFAULT_CONFIG.sqlite },
+    embedding: { ...DEFAULT_CONFIG.embedding },
+    providers: DEFAULT_CONFIG.providers
+      ? {
+          ollama: DEFAULT_CONFIG.providers.ollama ? { ...DEFAULT_CONFIG.providers.ollama } : undefined,
+          llama_cpp: DEFAULT_CONFIG.providers.llama_cpp ? { ...DEFAULT_CONFIG.providers.llama_cpp } : undefined,
+        }
+      : undefined,
+    chunking: { ...DEFAULT_CONFIG.chunking },
+  };
+}
+
 /**
  * Load configuration from file or environment
  * Priority: CLI args > local .ragrc > global config > defaults
@@ -73,7 +88,7 @@ export async function loadConfig(): Promise<Config> {
   };
   
   // Start with defaults
-  let config = { ...DEFAULT_CONFIG };
+  let config = cloneDefaultConfig();
 
   // Try to load global config (~/.config/ragi/config.json)
   const globalConfigPath = join(homedir(), '.config', 'ragi', 'config.json');
