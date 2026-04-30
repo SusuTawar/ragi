@@ -38,6 +38,9 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      - name: Run unit tests
+        run: npm run test:unit
+
       - name: Install Socket CLI
         if: ${{ env.SOCKET_SECURITY_API_KEY != '' }}
         run: python -m pip install socketsecurity --upgrade
