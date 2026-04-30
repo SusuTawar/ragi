@@ -65,6 +65,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SusuTawar/ragi"
+    "url": "git+https://github.com/SusuTawar/ragi.git"
   }
 }
