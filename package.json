@@ -43,6 +43,13 @@
     "cheerio": "^1.2.0",
     "sqlite-vec": "^0.1.9"
   },
+  "optionalDependencies": {
+    "sqlite-vec-darwin-arm64": "0.1.9",
+    "sqlite-vec-darwin-x64": "0.1.9",
+    "sqlite-vec-linux-arm64": "0.1.9",
+    "sqlite-vec-linux-x64": "0.1.9",
+    "sqlite-vec-windows-x64": "0.1.9"
+  },
   "overrides": {
     "protobufjs": "^7.5.5"
   },
