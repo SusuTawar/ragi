@@ -1,6 +1,10 @@
 import { loadConfig } from "../config.js";
 
 describe.sequential("config loading", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -24,6 +28,11 @@ describe.sequential("config loading", () => {
   });
 
   test("respects environment variable overrides", async () => {
+    vi.stubEnv("RAGI_VECTOR_STORE", "");
+    vi.stubEnv("RAGI_EMBEDDING_PROVIDER", "");
+    vi.stubEnv("RAGI_EMBEDDING_MODEL", "");
+    vi.stubEnv("RAGI_EMBEDDING_BASE_URL", "");
+
     vi.stubEnv("RAGI_VECTOR_STORE", "qdrant_local");
     vi.stubEnv("RAGI_EMBEDDING_PROVIDER", "ollama");
     vi.stubEnv("RAGI_EMBEDDING_MODEL", "nomic-embed-text");
@@ -38,6 +47,11 @@ describe.sequential("config loading", () => {
   });
 
   test("fills embedding.baseUrl from provider defaults when provider-specific config exists", async () => {
+    vi.stubEnv("RAGI_VECTOR_STORE", "");
+    vi.stubEnv("RAGI_EMBEDDING_PROVIDER", "");
+    vi.stubEnv("RAGI_EMBEDDING_MODEL", "");
+    vi.stubEnv("RAGI_EMBEDDING_BASE_URL", "");
+
     vi.stubEnv("RAGI_EMBEDDING_PROVIDER", "ollama");
     vi.stubEnv("RAGI_EMBEDDING_BASE_URL", "");
 
