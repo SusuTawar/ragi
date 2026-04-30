@@ -13,11 +13,12 @@ import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Package info
-const PKG_NAME = 'ragi';
-const PKG_VERSION = '0.1.0';
+const PACKAGE_NAME = '@susutawar/ragi';
+const BIN_NAME = 'ragi';
+const PKG_VERSION = '0.1.1';
 const SKILL_NAME = 'ragi';
 const GLOBAL_PROJECTS_DIR = join(homedir(), '.ragi', 'projects');
-const GLOBAL_CONFIG_DIR = join('.config', PKG_NAME);
+const GLOBAL_CONFIG_DIR = join('.config', BIN_NAME);
 const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, 'config.json');
 const SCRIPT_DIR = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const MCP_SERVER_NAME = 'ragi';
@@ -87,7 +88,7 @@ const MCP_ADAPTERS = {
     },
     global: {
       kind: 'manual',
-      pathHints: ['~/.claude/settings.json', 'claude mcp add ragi --scope user -- cmd /c npx ragi'],
+      pathHints: ['~/.claude/settings.json', `claude mcp add ${MCP_SERVER_NAME} --scope user -- cmd /c npx -y ${PACKAGE_NAME}`],
       snippetKind: 'claude-cli',
     },
   },
@@ -180,22 +181,22 @@ function listAgentIds() { return Object.keys(AGENTS); }
 function getJsonMcpEntry() {
   return {
     command: 'npx',
-    args: ['ragi'],
+    args: ['-y', PACKAGE_NAME],
   };
 }
 
 function getOpenCodeMcpEntry() {
   return {
     type: 'local',
-    command: ['npx', 'ragi'],
+    command: ['npx', '-y', PACKAGE_NAME],
   };
 }
 
 function getGooseMcpEntry() {
   return {
-    name: 'ragi',
+    name: MCP_SERVER_NAME,
     cmd: 'npx',
-    args: ['ragi'],
+    args: ['-y', PACKAGE_NAME],
     enabled: true,
     type: 'stdio',
     timeout: 300,
@@ -415,7 +416,7 @@ export function getSkillInstallationStatus(agentId, scope, options = {}) {
     packagedSkillHash,
   } = options;
   const targetSkillsDir = getTargetSkillsDir(agentId, scope, { cwd, home });
-  const targetSkillPath = join(targetSkillsDir, PKG_NAME, 'SKILL.md');
+  const targetSkillPath = join(targetSkillsDir, SKILL_NAME, 'SKILL.md');
 
   if (!exists(targetSkillPath)) {
     return { agentId, status: 'missing', targetSkillsDir, targetSkillPath };
@@ -447,7 +448,7 @@ export function getSkillInstallationStatuses(agentIds, scope, options = {}) {
 
 function copySkill(sourcePath, targetDir) {
   const sourceSkill = join(sourcePath, 'SKILL.md');
-  const targetSkill = join(targetDir, PKG_NAME, 'SKILL.md');
+  const targetSkill = join(targetDir, SKILL_NAME, 'SKILL.md');
   
   if (!existsSync(sourceSkill)) {
     error(`Skill source not found: ${sourceSkill}`);
@@ -467,7 +468,7 @@ function copySkill(sourcePath, targetDir) {
   try {
     const content = readFileSync(sourceSkill, 'utf-8');
     // Ensure target directory exists
-    const targetPkgDir = join(targetDir, PKG_NAME);
+    const targetPkgDir = join(targetDir, SKILL_NAME);
     if (!existsSync(targetPkgDir)) {
       mkdirSync(targetPkgDir, { recursive: true });
     }
@@ -637,7 +638,7 @@ function upsertTomlMcpServer(existingContent) {
   const block = [
     `[mcp_servers.${MCP_SERVER_NAME}]`,
     `command = "npx"`,
-    `args = ["ragi"]`,
+    `args = ["-y", "${PACKAGE_NAME}"]`,
     '',
   ].join('\n');
   const pattern = /^\[mcp_servers\.ragi\]\s*\n(?:.*\n)*?(?=^\[|\Z)/m;
@@ -659,7 +660,7 @@ function renderMcpSnippet(snippetKind = 'stdio') {
     return [
       `[mcp_servers.${MCP_SERVER_NAME}]`,
       `command = "npx"`,
-      `args = ["ragi"]`,
+      `args = ["-y", "${PACKAGE_NAME}"]`,
     ].join('\n');
   }
 
@@ -675,9 +676,9 @@ function renderMcpSnippet(snippetKind = 'stdio') {
     return [
       'extensions:',
       `  ${MCP_SERVER_NAME}:`,
-      `    name: ragi`,
+      `    name: ${MCP_SERVER_NAME}`,
       `    cmd: npx`,
-      `    args: [ragi]`,
+      `    args: [-y, ${PACKAGE_NAME}]`,
       `    enabled: true`,
       `    type: stdio`,
       `    timeout: 300`,
@@ -685,7 +686,7 @@ function renderMcpSnippet(snippetKind = 'stdio') {
   }
 
   if (snippetKind === 'claude-cli') {
-    return 'claude mcp add ragi --scope user -- cmd /c npx ragi';
+    return `claude mcp add ${MCP_SERVER_NAME} --scope user -- cmd /c npx -y ${PACKAGE_NAME}`;
   }
 
   return JSON.stringify({
@@ -1000,7 +1001,7 @@ export async function chooseProjectAgents(options = {}) {
     return { selectedAgentIds: parsed.selectedAgentIds, usedDetectedDefaults: false, cancelled: false };
   }
 
-  logger('No valid agent selection provided. Re-run `npx ragi init` and choose agents, or use `-a=<agent>`.');
+  logger(`No valid agent selection provided. Re-run \`npx -y ${PACKAGE_NAME} init\` and choose agents, or use \`-a=<agent>\`.`);
   return { selectedAgentIds: [], usedDetectedDefaults: false, cancelled: true };
 }
 
@@ -1096,21 +1097,21 @@ export async function maybeScaffoldGlobalConfig(options = {}) {
 }
 
 export function checkUpgrades(logger = log) {
-  logger(`Checking ${PKG_NAME} skill installations...\n`);
+  logger(`Checking ${SKILL_NAME} skill installations...\n`);
 
   const cwd = process.cwd();
   let found = false;
   
   for (const [agentId, agent] of Object.entries(AGENTS)) {
     // Check local install path
-    const localSkillPath = join(cwd, agent.local, PKG_NAME, 'SKILL.md');
+    const localSkillPath = join(cwd, agent.local, SKILL_NAME, 'SKILL.md');
     if (existsSync(localSkillPath)) {
       logger(`  ${agent.name} (local): installed`);
       found = true;
     }
     
     // Check global install path
-    const globalSkillPath = join(homedir(), agent.global, PKG_NAME, 'SKILL.md');
+    const globalSkillPath = join(homedir(), agent.global, SKILL_NAME, 'SKILL.md');
     if (existsSync(globalSkillPath)) {
       logger(`  ${agent.name} (global): installed`);
       found = true;
@@ -1118,8 +1119,8 @@ export function checkUpgrades(logger = log) {
   }
   
   if (!found) {
-    logger(`No ${PKG_NAME} skills found.`);
-    logger(`\nInstall with: npx ${PKG_NAME} init`);
+    logger(`No ${SKILL_NAME} skills found.`);
+    logger(`\nInstall with: npx -y ${PACKAGE_NAME} init`);
   }
 
   return found;
@@ -1156,13 +1157,13 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
   
   // If published (installed via npm), look in node_modules
   if (!existsSync(selfPath)) {
-    const nodeModulesPath = join(cwd, 'node_modules', PKG_NAME, 'skills', SKILL_NAME);
+    const nodeModulesPath = join(cwd, 'node_modules', ...PACKAGE_NAME.split('/'), 'skills', SKILL_NAME);
     if (existsSync(nodeModulesPath)) {
       // Use installed version
     }
   }
 
-  log(`Initializing ${PKG_NAME} v${PKG_VERSION}...\n`);
+  log(`Initializing ${PACKAGE_NAME} v${PKG_VERSION}...\n`);
   
   // Setup global projects dir
   setupGlobalProjects();
@@ -1195,7 +1196,7 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
   if (selectedAgents.length === 0) {
     log('No supported AI agents detected.');
     log(`\nSupported: ${Object.keys(AGENTS).join(', ')}`);
-    log(`\nManual install: npx ${PKG_NAME} init -a <agent-name>`);
+    log(`\nManual install: npx -y ${PACKAGE_NAME} init -a <agent-name>`);
   } else {
     if (!isGlobal && !targetAgent && interactive) {
       log(`Selected: ${selectedAgents.map(a => AGENTS[a].name).join(', ')}\n`);
@@ -1295,7 +1296,7 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
 
   log(`\nDone: ${installed} installed, ${updated} updated, ${current} current, ${skipped} skipped`);
   log(`\nRegister ragi with your MCP host using:`);
-  log(`  { "mcpServers": { "ragi": { "command": "npx", "args": ["ragi"] } } }`);
+  log(`  { "mcpServers": { "ragi": { "command": "npx", "args": ["-y", "${PACKAGE_NAME}"] } } }`);
   printExistingProjectOverrideNotes(selectedAgents, cwd, log);
 
   let mcpResults = [];
@@ -1351,24 +1352,24 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
 }
 
 function showHelp() {
-  log(`${PKG_NAME} v${PKG_VERSION} - Skill installer
+  log(`${BIN_NAME} v${PKG_VERSION} - Skill installer
   
 Usage:
-  npx ${PKG_NAME} init              Detect and install
-  npx ${PKG_NAME} init --local     Install to project only
-  npx ${PKG_NAME} init --global   Install globally
-  npx ${PKG_NAME} init -a=<agent> Install to specific agent
-  npx ${PKG_NAME} init --check    Check installations
-  npx ${PKG_NAME} init --no-docs  Skip updating AGENTS.md/CLAUDE.md
-  npx ${PKG_NAME} init --force   Overwrite outdated installed skills
-  npx ${PKG_NAME} init --help     Show this help
+  npx -y ${PACKAGE_NAME} init              Detect and install
+  npx -y ${PACKAGE_NAME} init --local     Install to project only
+  npx -y ${PACKAGE_NAME} init --global   Install globally
+  npx -y ${PACKAGE_NAME} init -a=<agent> Install to specific agent
+  npx -y ${PACKAGE_NAME} init --check    Check installations
+  npx -y ${PACKAGE_NAME} init --no-docs  Skip updating AGENTS.md/CLAUDE.md
+  npx -y ${PACKAGE_NAME} init --force   Overwrite outdated installed skills
+  npx -y ${PACKAGE_NAME} init --help     Show this help
   
 Examples:
-  npx ${PKG_NAME} init
-  npx ${PKG_NAME} init -a=opencode
-  npx ${PKG_NAME} init --global
-  npx ${PKG_NAME} init --check
-  npx ${PKG_NAME} init --no-docs
+  npx -y ${PACKAGE_NAME} init
+  npx -y ${PACKAGE_NAME} init -a=opencode
+  npx -y ${PACKAGE_NAME} init --global
+  npx -y ${PACKAGE_NAME} init --check
+  npx -y ${PACKAGE_NAME} init --no-docs
 
 Init can also register ragi with the selected agent host(s).
 Init checks MCP registration status first and only prompts for agents that still need setup.

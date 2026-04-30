@@ -122,8 +122,8 @@ function assertPackageMetadata() {
     }
   }
 
-  if (pkg.name !== "ragi") {
-    fail(`package name must remain "ragi" for release workflow, received "${pkg.name}"`);
+  if (pkg.name !== "@susutawar/ragi") {
+    fail(`package name must remain "@susutawar/ragi" for release workflow, received "${pkg.name}"`);
   }
 
   if (!pkg.bin.ragi) {
@@ -288,7 +288,7 @@ function publishRelease() {
 
   const version = readPackageJson().version;
   console.log("");
-  console.log(`Published ragi@${version} to npm.`);
+  console.log(`Published @susutawar/ragi@${version} to npm.`);
   console.log(`Next steps: git tag v${version} && git push origin v${version}`);
   console.log(`Then create a GitHub release using the CHANGELOG.md entry for ${version}.`);
 }

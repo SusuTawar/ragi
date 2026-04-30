@@ -16,8 +16,12 @@ npm install
 npm run build
 npm start
 
-# Or use npx
-npx ragi
+# Or use npx without a global install
+npx -y @susutawar/ragi
+
+# Or install globally, then run the bin directly
+npm install -g @susutawar/ragi
+ragi
 ```
 
 If you prefer Bun locally, the equivalent maintainer flow still works:
@@ -32,16 +36,16 @@ bun run test
 
 ```bash
 # Initialize skill locally
-npx ragi init
+npx -y @susutawar/ragi init
 
 # Initialize skill globally
-npx ragi init --global
+npx -y @susutawar/ragi init --global
 
 # Check installations
-npx ragi init --check
+npx -y @susutawar/ragi init --check
 ```
 
-`npx ragi init` now:
+`npx -y @susutawar/ragi init` now:
 - asks which agent(s) are used in the current project,
 - checks whether the installed `ragi` skill is missing, current, or outdated before copying,
 - checks whether `ragi` is already registered with the selected agent host(s) before offering MCP setup,
@@ -86,3 +90,10 @@ Or use environment variables (RAGI_* takes precedence):
 - `RAGI_EMBEDDING_PROVIDER`
 - `RAGI_EMBEDDING_MODEL`
 - `RAGI_EMBEDDING_BASE_URL`
+
+## Troubleshooting
+
+If Node reports a `sharp.node` error while using the default `transformers_js` embedding provider:
+- avoid mixing `bun install` and `npm install` in the same `node_modules`
+- reinstall dependencies with the same package manager you plan to run with
+- if you use `npx -y @susutawar/ragi`, let npm resolve a fresh package install instead of reusing a mixed local install

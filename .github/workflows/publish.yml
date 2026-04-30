@@ -1,0 +1,52 @@
+name: Publish Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Install Socket CLI
+        if: ${{ secrets.SOCKET_SECURITY_API_KEY != '' }}
+        run: pip install socketsecurity --upgrade
+
+      - name: Run Socket scan
+        if: ${{ secrets.SOCKET_SECURITY_API_KEY != '' }}
+        env:
+          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+        run: socketci
+
+      - name: Validate release
+        run: npm run check
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
