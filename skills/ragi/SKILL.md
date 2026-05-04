@@ -95,8 +95,8 @@ Configure via `.ragrc` file or environment variables:
 ## Installation
 
 ```bash
-npx -y @susutawar/ragi init      # Install skill locally
-npx -y @susutawar/ragi init -g   # Install skill globally
+npx -y @susutawar/ragi@latest init      # Install skill locally
+npx -y @susutawar/ragi@latest init -g   # Install skill globally
 ```
 
 After install, configure your MCP client:
@@ -105,7 +105,7 @@ After install, configure your MCP client:
   "mcpServers": {
     "ragi": {
       "command": "npx",
-      "args": ["-y", "@susutawar/ragi"]
+      "args": ["-y", "@susutawar/ragi@latest"]
     }
   }
 }

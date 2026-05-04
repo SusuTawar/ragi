@@ -103,7 +103,7 @@ async function testUpsertJsonMcpConfig() {
   assert.ok(parsed.mcpServers.existing);
   assert.deepEqual(parsed.mcpServers.ragi, {
     command: 'npx',
-    args: ['-y', '@susutawar/ragi'],
+    args: ['-y', '@susutawar/ragi@latest'],
   });
 }
 
@@ -116,7 +116,7 @@ async function testUpsertTomlMcpConfig() {
   assert.ok(updated.includes('[mcp_servers.playwright]'));
   assert.ok(updated.includes('[mcp_servers.ragi]'));
   assert.ok(updated.includes('command = "npx"'));
-  assert.ok(updated.includes('args = ["-y", "@susutawar/ragi"]'));
+  assert.ok(updated.includes('args = ["-y", "@susutawar/ragi@latest"]'));
 }
 
 async function testParseAgentSelection() {

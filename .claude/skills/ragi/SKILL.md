@@ -88,15 +88,15 @@ Configure via `.ragrc` file or environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `BUN_RAG_EMBEDDING_PROVIDER` | Provider: `ollama`, `transformers_js`, `llama_cpp` |
-| `BUN_RAG_EMBEDDING_MODEL` | Model name |
-| `BUN_RAG_EMBEDDING_BASE_URL` | API base URL for Ollama/Llama.cpp |
+| `RAGI_EMBEDDING_PROVIDER` | Provider: `ollama`, `transformers_js`, `llama_cpp` |
+| `RAGI_EMBEDDING_MODEL` | Model name |
+| `RAGI_EMBEDDING_BASE_URL` | API base URL for Ollama/Llama.cpp |
 
 ## Installation
 
 ```bash
-npx ragi init      # Install skill locally
-npx ragi init -g   # Install skill globally
+npx -y @susutawar/ragi init      # Install skill locally
+npx -y @susutawar/ragi init -g   # Install skill globally
 ```
 
 After install, configure your MCP client:
@@ -105,7 +105,7 @@ After install, configure your MCP client:
   "mcpServers": {
     "ragi": {
       "command": "npx",
-      "args": ["ragi"]
+      "args": ["-y", "@susutawar/ragi"]
     }
   }
 }

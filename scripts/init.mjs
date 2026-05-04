@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Package info
 const PACKAGE_NAME = '@susutawar/ragi';
+const NPX_PACKAGE_SPEC = `${PACKAGE_NAME}@latest`;
 const BIN_NAME = 'ragi';
 const PKG_VERSION = '0.1.2';
 const SKILL_NAME = 'ragi';
@@ -88,7 +89,7 @@ const MCP_ADAPTERS = {
     },
     global: {
       kind: 'manual',
-      pathHints: ['~/.claude/settings.json', `claude mcp add ${MCP_SERVER_NAME} --scope user -- cmd /c npx -y ${PACKAGE_NAME}`],
+      pathHints: ['~/.claude/settings.json', `claude mcp add ${MCP_SERVER_NAME} --scope user -- cmd /c npx -y ${NPX_PACKAGE_SPEC}`],
       snippetKind: 'claude-cli',
     },
   },
@@ -181,14 +182,14 @@ function listAgentIds() { return Object.keys(AGENTS); }
 function getJsonMcpEntry() {
   return {
     command: 'npx',
-    args: ['-y', PACKAGE_NAME],
+    args: ['-y', NPX_PACKAGE_SPEC],
   };
 }
 
 function getOpenCodeMcpEntry() {
   return {
     type: 'local',
-    command: ['npx', '-y', PACKAGE_NAME],
+    command: ['npx', '-y', NPX_PACKAGE_SPEC],
   };
 }
 
@@ -196,7 +197,7 @@ function getGooseMcpEntry() {
   return {
     name: MCP_SERVER_NAME,
     cmd: 'npx',
-    args: ['-y', PACKAGE_NAME],
+    args: ['-y', NPX_PACKAGE_SPEC],
     enabled: true,
     type: 'stdio',
     timeout: 300,
@@ -638,7 +639,7 @@ function upsertTomlMcpServer(existingContent) {
   const block = [
     `[mcp_servers.${MCP_SERVER_NAME}]`,
     `command = "npx"`,
-    `args = ["-y", "${PACKAGE_NAME}"]`,
+    `args = ["-y", "${NPX_PACKAGE_SPEC}"]`,
     '',
   ].join('\n');
   const pattern = /^\[mcp_servers\.ragi\]\s*\n(?:.*\n)*?(?=^\[|\Z)/m;
@@ -660,7 +661,7 @@ function renderMcpSnippet(snippetKind = 'stdio') {
     return [
       `[mcp_servers.${MCP_SERVER_NAME}]`,
       `command = "npx"`,
-      `args = ["-y", "${PACKAGE_NAME}"]`,
+      `args = ["-y", "${NPX_PACKAGE_SPEC}"]`,
     ].join('\n');
   }
 
@@ -678,7 +679,7 @@ function renderMcpSnippet(snippetKind = 'stdio') {
       `  ${MCP_SERVER_NAME}:`,
       `    name: ${MCP_SERVER_NAME}`,
       `    cmd: npx`,
-      `    args: [-y, ${PACKAGE_NAME}]`,
+      `    args: [-y, ${NPX_PACKAGE_SPEC}]`,
       `    enabled: true`,
       `    type: stdio`,
       `    timeout: 300`,
@@ -686,7 +687,7 @@ function renderMcpSnippet(snippetKind = 'stdio') {
   }
 
   if (snippetKind === 'claude-cli') {
-    return `claude mcp add ${MCP_SERVER_NAME} --scope user -- cmd /c npx -y ${PACKAGE_NAME}`;
+    return `claude mcp add ${MCP_SERVER_NAME} --scope user -- cmd /c npx -y ${NPX_PACKAGE_SPEC}`;
   }
 
   return JSON.stringify({
@@ -1001,7 +1002,7 @@ export async function chooseProjectAgents(options = {}) {
     return { selectedAgentIds: parsed.selectedAgentIds, usedDetectedDefaults: false, cancelled: false };
   }
 
-  logger(`No valid agent selection provided. Re-run \`npx -y ${PACKAGE_NAME} init\` and choose agents, or use \`-a=<agent>\`.`);
+  logger(`No valid agent selection provided. Re-run \`npx -y ${NPX_PACKAGE_SPEC} init\` and choose agents, or use \`-a=<agent>\`.`);
   return { selectedAgentIds: [], usedDetectedDefaults: false, cancelled: true };
 }
 
@@ -1120,7 +1121,7 @@ export function checkUpgrades(logger = log) {
   
   if (!found) {
     logger(`No ${SKILL_NAME} skills found.`);
-    logger(`\nInstall with: npx -y ${PACKAGE_NAME} init`);
+    logger(`\nInstall with: npx -y ${NPX_PACKAGE_SPEC} init`);
   }
 
   return found;
@@ -1196,7 +1197,7 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
   if (selectedAgents.length === 0) {
     log('No supported AI agents detected.');
     log(`\nSupported: ${Object.keys(AGENTS).join(', ')}`);
-    log(`\nManual install: npx -y ${PACKAGE_NAME} init -a <agent-name>`);
+  log(`\nManual install: npx -y ${NPX_PACKAGE_SPEC} init -a <agent-name>`);
   } else {
     if (!isGlobal && !targetAgent && interactive) {
       log(`Selected: ${selectedAgents.map(a => AGENTS[a].name).join(', ')}\n`);
@@ -1296,7 +1297,7 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
 
   log(`\nDone: ${installed} installed, ${updated} updated, ${current} current, ${skipped} skipped`);
   log(`\nRegister ragi with your MCP host using:`);
-  log(`  { "mcpServers": { "ragi": { "command": "npx", "args": ["-y", "${PACKAGE_NAME}"] } } }`);
+  log(`  { "mcpServers": { "ragi": { "command": "npx", "args": ["-y", "${NPX_PACKAGE_SPEC}"] } } }`);
   printExistingProjectOverrideNotes(selectedAgents, cwd, log);
 
   let mcpResults = [];
@@ -1355,21 +1356,21 @@ function showHelp() {
   log(`${BIN_NAME} v${PKG_VERSION} - Skill installer
   
 Usage:
-  npx -y ${PACKAGE_NAME} init              Detect and install
-  npx -y ${PACKAGE_NAME} init --local     Install to project only
-  npx -y ${PACKAGE_NAME} init --global   Install globally
-  npx -y ${PACKAGE_NAME} init -a=<agent> Install to specific agent
-  npx -y ${PACKAGE_NAME} init --check    Check installations
-  npx -y ${PACKAGE_NAME} init --no-docs  Skip updating AGENTS.md/CLAUDE.md
-  npx -y ${PACKAGE_NAME} init --force   Overwrite outdated installed skills
-  npx -y ${PACKAGE_NAME} init --help     Show this help
+  npx -y ${NPX_PACKAGE_SPEC} init              Detect and install
+  npx -y ${NPX_PACKAGE_SPEC} init --local     Install to project only
+  npx -y ${NPX_PACKAGE_SPEC} init --global   Install globally
+  npx -y ${NPX_PACKAGE_SPEC} init -a=<agent> Install to specific agent
+  npx -y ${NPX_PACKAGE_SPEC} init --check    Check installations
+  npx -y ${NPX_PACKAGE_SPEC} init --no-docs  Skip updating AGENTS.md/CLAUDE.md
+  npx -y ${NPX_PACKAGE_SPEC} init --force   Overwrite outdated installed skills
+  npx -y ${NPX_PACKAGE_SPEC} init --help     Show this help
   
 Examples:
-  npx -y ${PACKAGE_NAME} init
-  npx -y ${PACKAGE_NAME} init -a=opencode
-  npx -y ${PACKAGE_NAME} init --global
-  npx -y ${PACKAGE_NAME} init --check
-  npx -y ${PACKAGE_NAME} init --no-docs
+  npx -y ${NPX_PACKAGE_SPEC} init
+  npx -y ${NPX_PACKAGE_SPEC} init -a=opencode
+  npx -y ${NPX_PACKAGE_SPEC} init --global
+  npx -y ${NPX_PACKAGE_SPEC} init --check
+  npx -y ${NPX_PACKAGE_SPEC} init --no-docs
 
 Init can also register ragi with the selected agent host(s).
 Init checks MCP registration status first and only prompts for agents that still need setup.
