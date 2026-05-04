@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { checkbox, confirm, input, select } from '@inquirer/prompts';
 
 // Package info
 const PACKAGE_NAME = '@susutawar/ragi';
@@ -23,6 +24,21 @@ const GLOBAL_CONFIG_DIR = join('.config', BIN_NAME);
 const GLOBAL_CONFIG_PATH = join(GLOBAL_CONFIG_DIR, 'config.json');
 const SCRIPT_DIR = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const MCP_SERVER_NAME = 'ragi';
+const DOC_TARGET_FILES = ['AGENTS.md', 'CLAUDE.md'];
+const GLOBAL_CONFIG_PRESETS = {
+  transformers_js: {
+    label: 'transformers_js (local default)',
+    model: 'Xenova/all-MiniLM-L6-v2',
+  },
+  ollama: {
+    label: 'ollama',
+    model: 'nomic-embed-text',
+  },
+  llama_cpp: {
+    label: 'llama_cpp',
+    model: '',
+  },
+};
 
 // Agent configurations (from vercel-labs/skills reference)
 const AGENTS = {
@@ -136,13 +152,13 @@ const MCP_ADAPTERS = {
   },
   'goose': {
     local: {
-      kind: 'manual',
-      pathHints: ['~/.config/goose/config.yaml', 'goose configure'],
-      snippetKind: 'goose-yaml',
+      fallbackTo: 'global',
+      note: 'Goose MCP is configured globally, so local init will update the global Goose MCP config.',
     },
     global: {
-      kind: 'manual',
-      pathHints: ['~/.config/goose/config.yaml', 'goose configure'],
+      kind: 'yaml',
+      base: 'home',
+      relativePath: join('.config', 'goose', 'config.yaml'),
       snippetKind: 'goose-yaml',
     },
   },
@@ -222,6 +238,20 @@ function getDefaultGlobalConfig() {
     },
     chunking: { maxSize: 512, overlap: 50 },
   };
+}
+
+export function buildGlobalConfigFromPreset(preset = 'transformers_js', options = {}) {
+  const config = getDefaultGlobalConfig();
+  const provider = GLOBAL_CONFIG_PRESETS[preset] ? preset : 'transformers_js';
+  config.embedding.provider = provider;
+
+  if (provider === 'llama_cpp') {
+    config.embedding.model = options.model || 'set-your-llama-cpp-embedding-model';
+  } else {
+    config.embedding.model = GLOBAL_CONFIG_PRESETS[provider].model;
+  }
+
+  return config;
 }
 
 function validateRagiConfigShape(parsed) {
@@ -329,10 +359,13 @@ export function getGlobalConfigStatus(options = {}) {
 }
 
 export function scaffoldGlobalConfig(options = {}) {
-  const { home = homedir() } = options;
+  const {
+    home = homedir(),
+    config = getDefaultGlobalConfig(),
+  } = options;
   const filePath = getGlobalConfigPath(home);
   ensureParentDirectory(filePath);
-  writeFileSync(filePath, `${JSON.stringify(getDefaultGlobalConfig(), null, 2)}\n`);
+  writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`);
   return filePath;
 }
 
@@ -656,6 +689,37 @@ function upsertTomlMcpServer(existingContent) {
   return `${trimmed}\n\n${block}`;
 }
 
+function upsertGooseYamlMcpServer(existingContent) {
+  const block = renderMcpSnippet('goose-yaml');
+  const pattern = /^  ragi:\n(?:    .*\n)*/m;
+
+  if (!existingContent.trim()) {
+    return `${block}\n`;
+  }
+
+  if (/^extensions:\s*$/m.test(existingContent)) {
+    if (pattern.test(existingContent)) {
+      return existingContent.replace(pattern, block.split('\n').slice(1).join('\n'));
+    }
+
+    const trimmed = existingContent.replace(/\s+$/, '');
+    return `${trimmed}\n${block.split('\n').slice(1).join('\n')}\n`;
+  }
+
+  const trimmed = existingContent.replace(/\s+$/, '');
+  return `${trimmed}\n\n${block}\n`;
+}
+
+function hasExactGooseYamlMcpServer(existingContent) {
+  const expected = renderMcpSnippet('goose-yaml').trim();
+  return existingContent.includes(expected);
+}
+
+function hasExactTomlMcpServer(existingContent) {
+  const expected = renderMcpSnippet('codex-toml').trim();
+  return existingContent.includes(expected);
+}
+
 function renderMcpSnippet(snippetKind = 'stdio') {
   if (snippetKind === 'codex-toml') {
     return [
@@ -721,6 +785,44 @@ function printManualMcpInstructions(agentId, scope, options = {}) {
     logger(`  Target: ${pathHints.join(' or ')}`);
   }
   logger(renderMcpSnippet(snippetKind));
+  const followUp = getMcpFollowUpInstructions(agentId, scope, options);
+  if (followUp.command) {
+    logger(`  Run next: ${followUp.command}`);
+  } else if (followUp.note) {
+    logger(`  Next: ${followUp.note}`);
+  }
+}
+
+export function getMcpFollowUpInstructions(agentId, scope, options = {}) {
+  const target = resolveMcpTarget(agentId, scope, options);
+  const agentName = AGENTS[agentId]?.name ?? agentId;
+  const snippetKind = target.entryKind === 'opencode' ? 'opencode' : (target.snippetKind ?? 'stdio');
+
+  if (snippetKind === 'claude-cli') {
+    return {
+      command: renderMcpSnippet('claude-cli'),
+      note: 'Then restart Claude Code or reload MCP servers.',
+    };
+  }
+
+  if (snippetKind === 'goose-yaml') {
+    return {
+      command: null,
+      note: 'Restart Goose so it reloads the MCP definition.',
+    };
+  }
+
+  if (agentId === 'roo') {
+    return {
+      command: null,
+      note: 'Open Roo Code MCP settings in the extension UI, paste the snippet, then reload Roo Code.',
+    };
+  }
+
+  return {
+    command: null,
+    note: `Restart ${agentName} so it reloads the MCP definition.`,
+  };
 }
 
 export function upsertMcpConfigFile(existingContent, target) {
@@ -731,6 +833,10 @@ export function upsertMcpConfigFile(existingContent, target) {
 
   if (target.kind === 'toml') {
     return upsertTomlMcpServer(existingContent);
+  }
+
+  if (target.kind === 'yaml') {
+    return upsertGooseYamlMcpServer(existingContent);
   }
 
   throw new Error(`Unsupported writable MCP target kind: ${target.kind}`);
@@ -788,17 +894,29 @@ export function getMcpRegistrationStatus(agentId, scope, options = {}) {
       const expected = getExpectedMcpEntry(target);
       return {
         agentId,
-        status: areJsonEntriesEqual(entry, expected) ? 'configured' : 'configured',
+        status: areJsonEntriesEqual(entry, expected) ? 'configured' : 'invalid',
         target,
         targetPaths: [resolvedPath],
       };
     }
 
     if (target.kind === 'toml') {
-      const pattern = /^\[mcp_servers\.ragi\]\s*$/m;
       return {
         agentId,
-        status: pattern.test(existingContent) ? 'configured' : 'missing',
+        status: /^\[mcp_servers\.ragi\]\s*$/m.test(existingContent)
+          ? (hasExactTomlMcpServer(existingContent) ? 'configured' : 'invalid')
+          : 'missing',
+        target,
+        targetPaths: [resolvedPath],
+      };
+    }
+
+    if (target.kind === 'yaml') {
+      return {
+        agentId,
+        status: /(^|\n)  ragi:\n/m.test(existingContent)
+          ? (hasExactGooseYamlMcpServer(existingContent) ? 'configured' : 'invalid')
+          : 'missing',
         target,
         targetPaths: [resolvedPath],
       };
@@ -859,6 +977,10 @@ export function configureMcpForAgent(agentId, scope, options = {}) {
     ensureParentDirectory(resolvedPath);
       writeFileSync(resolvedPath, updatedContent);
     logger(`  ${agentName}: MCP configured`);
+    const followUp = getMcpFollowUpInstructions(agentId, scope, { cwd, home, exists });
+    if (followUp.note) {
+      logger(`  ${agentName}: ${followUp.note}`);
+    }
     return { agentId, status: 'configured', targetPaths: [resolvedPath] };
   } catch (err) {
     logger(`  ${agentName}: unable to write MCP config automatically (${err.message})`);
@@ -1012,9 +1134,9 @@ export async function updateDocsInCwd(options = {}) {
     interactive = isInteractive(),
     prompt = promptYesNo,
     logger = log,
+    targetFiles = DOC_TARGET_FILES,
   } = options;
   const blockText = buildRagiInstructionBlock();
-  const targetFiles = ['AGENTS.md', 'CLAUDE.md'];
   const results = [];
 
   for (const fileName of targetFiles) {
@@ -1097,6 +1219,707 @@ export async function maybeScaffoldGlobalConfig(options = {}) {
   return { action: status.exists ? 'replaced' : 'created', filePath: status.filePath, reason: null };
 }
 
+export function getDocUpdateStatuses(options = {}) {
+  const {
+    cwd = process.cwd(),
+    targetFiles = DOC_TARGET_FILES,
+    readFile = readFileSync,
+    exists = existsSync,
+  } = options;
+  const blockText = buildRagiInstructionBlock();
+
+  return targetFiles.map((fileName) => {
+    const filePath = join(cwd, fileName);
+    if (!exists(filePath)) {
+      return { fileName, filePath, status: 'missing' };
+    }
+
+    const content = readFile(filePath, 'utf-8');
+    const updated = upsertMarkedBlock(content, blockText);
+    return {
+      fileName,
+      filePath,
+      status: updated === content ? 'unchanged' : 'outdated',
+    };
+  });
+}
+
+function summarizeDocStatuses(statuses) {
+  return {
+    actionable: statuses.filter((status) => status.status === 'missing' || status.status === 'outdated'),
+    unchanged: statuses.filter((status) => status.status === 'unchanged'),
+  };
+}
+
+function isPromptAbort(err) {
+  return Boolean(err && typeof err === 'object' && (
+    err.name === 'AbortPromptError'
+    || err.name === 'ExitPromptError'
+    || err.name === 'CanceledPromptError'
+  ));
+}
+
+function buildWizardReviewSections({ targetAgent, isGlobal, flags, skillStatuses, mcpStatuses, globalConfigStatus }) {
+  const sections = [];
+  if (!isGlobal && !targetAgent) {
+    sections.push({ id: 'agents', label: 'Agent selection' });
+  }
+  if (skillStatuses.some((status) => status.status !== 'current')) {
+    sections.push({ id: 'skills', label: 'Skill actions' });
+  }
+  if (mcpStatuses.some((status) => status.status !== 'configured')) {
+    sections.push({ id: 'mcp', label: 'MCP setup' });
+  }
+  if (!flags.noDocs && !isGlobal) {
+    sections.push({ id: 'docs', label: 'Docs updates' });
+  }
+  if (!globalConfigStatus.valid) {
+    sections.push({ id: 'config', label: 'Global config' });
+  }
+  return sections;
+}
+
+export function getInteractiveAgentGroups(options = {}) {
+  const {
+    orderedAgentIds = listAgentIds(),
+    agents = AGENTS,
+  } = options;
+  const groups = [];
+  const sharedAgentsEntry = orderedAgentIds.filter((agentId) => agents[agentId]?.local === '.agents/skills');
+
+  if (sharedAgentsEntry.length > 0) {
+    groups.push({
+      id: 'shared-agents-skills',
+      label: `.agents/skills (${sharedAgentsEntry.map((agentId) => agents[agentId]?.name ?? agentId).join(', ')})`,
+      agentIds: sharedAgentsEntry,
+    });
+  }
+
+  for (const agentId of orderedAgentIds) {
+    const agent = agents[agentId];
+    if (!agent || agent.local === '.agents/skills') {
+      continue;
+    }
+    groups.push({
+      id: agentId,
+      label: agent.name,
+      agentIds: [agentId],
+    });
+  }
+
+  return groups;
+}
+
+export function getInteractiveMcpGroups(mcpStatuses = []) {
+  const grouped = new Map();
+
+  for (const status of mcpStatuses) {
+    if (status.status === 'configured') {
+      continue;
+    }
+
+    const keyParts = [
+      status.status,
+      status.target?.kind ?? 'unknown',
+      (status.targetPaths ?? []).join('|'),
+      status.reason ?? '',
+    ];
+    const key = keyParts.join('::');
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.agentIds.push(status.agentId);
+      continue;
+    }
+
+    grouped.set(key, {
+      id: `mcp-group-${grouped.size + 1}`,
+      status: status.status,
+      targetKind: status.target?.kind ?? 'unknown',
+      targetPaths: status.targetPaths ?? [],
+      reason: status.reason ?? null,
+      agentIds: [status.agentId],
+    });
+  }
+
+  return [...grouped.values()].map((group) => {
+    const agentNames = group.agentIds.map((agentId) => AGENTS[agentId]?.name ?? agentId).join(', ');
+    const actionLabel = group.status === 'unknown' ? 'show manual instructions' : 'configure automatically';
+    const targetLabel = group.targetPaths.length > 0 ? ` -> ${group.targetPaths.join(' or ')}` : '';
+    return {
+      ...group,
+      label: `${agentNames} (${actionLabel})${targetLabel}`,
+    };
+  });
+}
+
+function buildDefaultWizardState({
+  selectedAgents,
+  skillStatuses,
+  mcpStatuses,
+  docStatuses,
+  globalConfigStatus,
+  force,
+}) {
+  return {
+    selectedAgents,
+    skillActions: Object.fromEntries(skillStatuses.map((status) => {
+      if (status.status === 'missing') return [status.agentId, 'install'];
+      if (status.status === 'outdated' || status.status === 'invalid') return [status.agentId, force ? 'update' : 'update'];
+      return [status.agentId, 'current'];
+    })),
+    mcpActions: Object.fromEntries(mcpStatuses.map((status) => {
+      if (status.status === 'configured') return [status.agentId, 'configured'];
+      if (status.status === 'missing' || status.status === 'invalid') return [status.agentId, 'configure'];
+      return [status.agentId, 'manual'];
+    })),
+    docActions: Object.fromEntries(docStatuses.map((status) => {
+      if (status.status === 'missing') return [status.fileName, 'create'];
+      if (status.status === 'outdated') return [status.fileName, 'update'];
+      return [status.fileName, 'unchanged'];
+    })),
+    globalConfigAction: globalConfigStatus.valid
+      ? 'unchanged'
+      : (globalConfigStatus.exists ? 'replace' : 'create'),
+    globalConfigPreset: 'transformers_js',
+    llamaCppModel: '',
+  };
+}
+
+function createWizardPlan({
+  state,
+  skillStatuses,
+  mcpStatuses,
+  docStatuses,
+  globalConfigStatus,
+  flags,
+  isGlobal,
+}) {
+  const skillPlan = skillStatuses.map((status) => ({
+    agentId: status.agentId,
+    currentStatus: status.status,
+    action: state.skillActions[status.agentId] ?? 'skip',
+  }));
+
+  const mcpPlan = mcpStatuses.map((status) => ({
+    agentId: status.agentId,
+    currentStatus: status.status,
+    action: state.mcpActions[status.agentId] ?? (status.status === 'configured' ? 'configured' : 'skip'),
+    targetPaths: status.targetPaths ?? [],
+  }));
+
+  const docsPlan = isGlobal || flags.noDocs
+    ? []
+    : docStatuses.map((status) => ({
+      fileName: status.fileName,
+      currentStatus: status.status,
+      action: state.docActions[status.fileName] ?? 'skip',
+    }));
+
+  const globalConfigPlan = {
+    currentStatus: globalConfigStatus.valid ? 'valid' : (globalConfigStatus.exists ? 'invalid' : 'missing'),
+    action: state.globalConfigAction,
+    preset: state.globalConfigPreset,
+    model: state.llamaCppModel,
+  };
+
+  return {
+    selectedAgents: state.selectedAgents,
+    skillPlan,
+    mcpPlan,
+    docsPlan,
+    globalConfigPlan,
+  };
+}
+
+export function formatWizardPlan(plan, options = {}) {
+  const {
+    scope = 'local',
+    isGlobal = false,
+    flags = {},
+  } = options;
+  const lines = [];
+  lines.push(`Scope: ${scope}`);
+  lines.push(`Agents: ${plan.selectedAgents.length > 0 ? plan.selectedAgents.map((agentId) => AGENTS[agentId]?.name ?? agentId).join(', ') : 'none'}`);
+
+  const skillActions = plan.skillPlan.filter((item) => item.action !== 'current' && item.action !== 'skip');
+  lines.push(`Skills: ${skillActions.length > 0 ? skillActions.map((item) => `${AGENTS[item.agentId]?.name ?? item.agentId} -> ${item.action}`).join('; ') : 'no changes'}`);
+
+  const mcpActions = plan.mcpPlan.filter((item) => item.action !== 'configured');
+  lines.push(`MCP: ${mcpActions.length > 0 ? mcpActions.map((item) => `${AGENTS[item.agentId]?.name ?? item.agentId} -> ${item.action}`).join('; ') : 'already configured'}`);
+
+  if (!isGlobal && !flags.noDocs) {
+    const docsActions = plan.docsPlan.filter((item) => item.action !== 'unchanged' && item.action !== 'skip');
+    lines.push(`Docs: ${docsActions.length > 0 ? docsActions.map((item) => `${item.fileName} -> ${item.action}`).join('; ') : 'no changes'}`);
+  } else if (isGlobal) {
+    lines.push('Docs: skipped for global install');
+  } else {
+    lines.push('Docs: skipped via --no-docs');
+  }
+
+  if (plan.globalConfigPlan.action === 'unchanged') {
+    lines.push('Global config: unchanged');
+  } else if (plan.globalConfigPlan.action === 'skip') {
+    lines.push('Global config: skipped');
+  } else {
+    const presetLabel = GLOBAL_CONFIG_PRESETS[plan.globalConfigPlan.preset]?.label ?? plan.globalConfigPlan.preset;
+    const modelDetail = plan.globalConfigPlan.preset === 'llama_cpp'
+      ? ` (${plan.globalConfigPlan.model || 'model required'})`
+      : '';
+    lines.push(`Global config: ${plan.globalConfigPlan.action} using ${presetLabel}${modelDetail}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function createInteractiveWizard(overrides = {}) {
+  const checkboxPrompt = overrides.checkbox ?? checkbox;
+  const confirmPrompt = overrides.confirm ?? confirm;
+  const selectPrompt = overrides.select ?? select;
+  const inputPrompt = overrides.input ?? input;
+
+  return {
+    async pickAgents({ detectedAgentIds = [], orderedAgentIds = listAgentIds() }) {
+      try {
+        const groups = getInteractiveAgentGroups({ orderedAgentIds });
+        const selectedGroupIds = await checkboxPrompt({
+          message: 'Choose which agents are used in this project',
+          choices: groups.map((group) => ({
+            name: `${group.label}${group.agentIds.some((agentId) => detectedAgentIds.includes(agentId)) ? ' (detected)' : ''}`,
+            value: group.id,
+            checked: group.agentIds.some((agentId) => detectedAgentIds.includes(agentId)),
+          })),
+          required: detectedAgentIds.length === 0,
+        });
+        const selectedAgentIds = groups
+          .filter((group) => selectedGroupIds.includes(group.id))
+          .flatMap((group) => group.agentIds);
+
+        return { cancelled: false, selectedAgentIds };
+      } catch (err) {
+        if (isPromptAbort(err)) {
+          return { cancelled: true, selectedAgentIds: [] };
+        }
+        throw err;
+      }
+    },
+    async pickSkillActions({ skillStatuses, force = false }) {
+      if (force) {
+        return Object.fromEntries(skillStatuses.map((status) => {
+          if (status.status === 'missing') return [status.agentId, 'install'];
+          if (status.status === 'outdated' || status.status === 'invalid') return [status.agentId, 'update'];
+          return [status.agentId, 'current'];
+        }));
+      }
+
+      const actionable = skillStatuses.filter((status) => status.status === 'missing' || status.status === 'outdated' || status.status === 'invalid');
+      if (actionable.length === 0) {
+        return Object.fromEntries(skillStatuses.map((status) => [status.agentId, 'current']));
+      }
+
+      try {
+        const chosen = await checkboxPrompt({
+          message: 'Choose which agent skills to install or update',
+          choices: actionable.map((status) => ({
+            name: `${AGENTS[status.agentId]?.name ?? status.agentId} (${status.status})`,
+            value: status.agentId,
+            checked: true,
+          })),
+        });
+
+        return Object.fromEntries(skillStatuses.map((status) => {
+          if (status.status === 'current') return [status.agentId, 'current'];
+          const selected = chosen.includes(status.agentId);
+          if (!selected) return [status.agentId, 'skip'];
+          return [status.agentId, status.status === 'missing' ? 'install' : 'update'];
+        }));
+      } catch (err) {
+        if (isPromptAbort(err)) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    async pickMcpActions({ mcpStatuses }) {
+      try {
+        const groups = getInteractiveMcpGroups(mcpStatuses);
+        const chosen = groups.length > 0
+          ? await checkboxPrompt({
+            message: 'Choose which MCP setup actions to apply',
+            choices: groups.map((group) => ({
+              name: group.label,
+              value: group.id,
+              checked: true,
+            })),
+          })
+          : [];
+
+        const selectedAgentIds = groups
+          .filter((group) => chosen.includes(group.id))
+          .flatMap((group) => group.agentIds);
+
+        return Object.fromEntries(mcpStatuses.map((status) => {
+          if (status.status === 'configured') return [status.agentId, 'configured'];
+          if (!selectedAgentIds.includes(status.agentId)) return [status.agentId, 'skip'];
+          if (status.status === 'unknown') return [status.agentId, 'manual'];
+          return [status.agentId, 'configure'];
+        }));
+      } catch (err) {
+        if (isPromptAbort(err)) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    async pickDocActions({ docStatuses }) {
+      const actionable = docStatuses.filter((status) => status.status === 'missing' || status.status === 'outdated');
+      if (actionable.length === 0) {
+        return Object.fromEntries(docStatuses.map((status) => [status.fileName, 'unchanged']));
+      }
+
+      try {
+        const chosen = await checkboxPrompt({
+          message: 'Choose which repo docs to update',
+          choices: actionable.map((status) => ({
+            name: `${status.fileName} (${status.status === 'missing' ? 'create' : 'update'})`,
+            value: status.fileName,
+            checked: true,
+          })),
+        });
+
+        return Object.fromEntries(docStatuses.map((status) => {
+          if (status.status === 'unchanged') return [status.fileName, 'unchanged'];
+          const selected = chosen.includes(status.fileName);
+          if (!selected) return [status.fileName, 'skip'];
+          return [status.fileName, status.status === 'missing' ? 'create' : 'update'];
+        }));
+      } catch (err) {
+        if (isPromptAbort(err)) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    async pickGlobalConfig({ globalConfigStatus, currentPreset = 'transformers_js', currentModel = '' }) {
+      if (globalConfigStatus.valid) {
+        return { action: 'unchanged', preset: currentPreset, model: currentModel };
+      }
+
+      try {
+        const action = await selectPrompt({
+          message: globalConfigStatus.exists
+            ? `Global config is invalid (${globalConfigStatus.reason}). What should init do?`
+            : 'Global config is missing. What should init do?',
+          choices: [
+            { name: globalConfigStatus.exists ? 'Replace with a scaffold' : 'Create a scaffold', value: globalConfigStatus.exists ? 'replace' : 'create' },
+            { name: 'Skip for now', value: 'skip' },
+          ],
+        });
+
+        if (action === 'skip') {
+          return { action, preset: currentPreset, model: currentModel };
+        }
+
+        const preset = await selectPrompt({
+          message: 'Choose an embedding provider preset',
+          default: currentPreset,
+          choices: Object.entries(GLOBAL_CONFIG_PRESETS).map(([value, presetDetails]) => ({
+            name: `${presetDetails.label} (${value === 'llama_cpp' ? 'enter model name next' : presetDetails.model})`,
+            value,
+          })),
+        });
+
+        let model = currentModel;
+        if (preset === 'llama_cpp') {
+          model = await inputPrompt({
+            message: 'Enter the llama.cpp embedding model name',
+            default: currentModel || 'set-your-llama-cpp-embedding-model',
+            validate(value) {
+              return String(value).trim().length > 0 || 'Model name is required for llama_cpp.';
+            },
+          });
+        }
+
+        return { action, preset, model };
+      } catch (err) {
+        if (isPromptAbort(err)) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    async reviewPlan({ planText, backSections }) {
+      try {
+        const decision = await selectPrompt({
+          message: `Review init plan\n\n${planText}`,
+          choices: [
+            { name: 'Apply changes', value: 'apply' },
+            { name: 'Go back to a section', value: 'back', disabled: backSections.length === 0 },
+            { name: 'Cancel', value: 'cancel' },
+          ],
+        });
+
+        if (decision !== 'back') {
+          return { decision };
+        }
+
+        const section = await selectPrompt({
+          message: 'Which section do you want to revisit?',
+          choices: backSections.map((entry) => ({ name: entry.label, value: entry.id })),
+        });
+
+        return { decision: 'back', section };
+      } catch (err) {
+        if (isPromptAbort(err)) {
+          return { decision: 'cancel' };
+        }
+        throw err;
+      }
+    },
+  };
+}
+
+async function runInteractiveInitWizard({
+  wizard,
+  detectedAgents,
+  initialSelectedAgents,
+  targetAgent,
+  isGlobal,
+  flags,
+  scope,
+  cwd,
+  home,
+  logger = log,
+}) {
+  let selectedAgents = [...initialSelectedAgents];
+  let discovery = null;
+  let state = null;
+
+  const refreshDiscovery = () => {
+    const packagedSkill = getPackagedSkillMetadata({ cwd });
+    const skillStatuses = getSkillInstallationStatuses(selectedAgents, scope, {
+      cwd,
+      home,
+      packagedSkillHash: packagedSkill.hash,
+    });
+    const mcpStatuses = getMcpRegistrationStatuses(selectedAgents, scope, { cwd, home });
+    const docStatuses = !isGlobal && !flags.noDocs ? getDocUpdateStatuses({ cwd }) : [];
+    const globalConfigStatus = getGlobalConfigStatus({ home });
+    discovery = {
+      packagedSkill,
+      skillStatuses,
+      mcpStatuses,
+      docStatuses,
+      globalConfigStatus,
+    };
+    state = buildDefaultWizardState({
+      selectedAgents,
+      skillStatuses,
+      mcpStatuses,
+      docStatuses,
+      globalConfigStatus,
+      force: flags.force,
+    });
+  };
+
+  if (!isGlobal && !targetAgent) {
+    const agentChoice = await wizard.pickAgents({ detectedAgentIds: detectedAgents, orderedAgentIds: listAgentIds() });
+    if (agentChoice.cancelled) {
+      return { cancelled: true };
+    }
+    selectedAgents = agentChoice.selectedAgentIds;
+  }
+
+  refreshDiscovery();
+
+  const reviewSections = buildWizardReviewSections({
+    targetAgent,
+    isGlobal,
+    flags,
+    skillStatuses: discovery.skillStatuses,
+    mcpStatuses: discovery.mcpStatuses,
+    globalConfigStatus: discovery.globalConfigStatus,
+  });
+
+  let section = reviewSections.find((entry) => entry.id !== 'agents')?.id ?? 'review';
+
+  while (true) {
+    if (section === 'agents') {
+      const agentChoice = await wizard.pickAgents({ detectedAgentIds: detectedAgents, orderedAgentIds: listAgentIds() });
+      if (agentChoice.cancelled) {
+        return { cancelled: true };
+      }
+      selectedAgents = agentChoice.selectedAgentIds;
+      refreshDiscovery();
+      section = reviewSections.find((entry) => entry.id === 'skills')?.id
+        ?? reviewSections.find((entry) => entry.id === 'mcp')?.id
+        ?? reviewSections.find((entry) => entry.id === 'docs')?.id
+        ?? reviewSections.find((entry) => entry.id === 'config')?.id
+        ?? 'review';
+      continue;
+    }
+
+    if (section === 'skills') {
+      const nextSkillActions = await wizard.pickSkillActions({
+        skillStatuses: discovery.skillStatuses,
+        force: flags.force,
+      });
+      if (nextSkillActions === null) return { cancelled: true };
+      state.skillActions = nextSkillActions;
+      section = reviewSections.find((entry) => entry.id === 'mcp')?.id
+        ?? reviewSections.find((entry) => entry.id === 'docs')?.id
+        ?? reviewSections.find((entry) => entry.id === 'config')?.id
+        ?? 'review';
+      continue;
+    }
+
+    if (section === 'mcp') {
+      const nextMcpActions = await wizard.pickMcpActions({ mcpStatuses: discovery.mcpStatuses });
+      if (nextMcpActions === null) return { cancelled: true };
+      state.mcpActions = nextMcpActions;
+      section = reviewSections.find((entry) => entry.id === 'docs')?.id
+        ?? reviewSections.find((entry) => entry.id === 'config')?.id
+        ?? 'review';
+      continue;
+    }
+
+    if (section === 'docs') {
+      const nextDocActions = await wizard.pickDocActions({ docStatuses: discovery.docStatuses });
+      if (nextDocActions === null) return { cancelled: true };
+      state.docActions = nextDocActions;
+      section = reviewSections.find((entry) => entry.id === 'config')?.id ?? 'review';
+      continue;
+    }
+
+    if (section === 'config') {
+      const configChoice = await wizard.pickGlobalConfig({
+        globalConfigStatus: discovery.globalConfigStatus,
+        currentPreset: state.globalConfigPreset,
+        currentModel: state.llamaCppModel,
+      });
+      if (configChoice === null) return { cancelled: true };
+      state.globalConfigAction = configChoice.action;
+      state.globalConfigPreset = configChoice.preset ?? state.globalConfigPreset;
+      state.llamaCppModel = configChoice.model ?? state.llamaCppModel;
+      section = 'review';
+      continue;
+    }
+
+    const plan = createWizardPlan({
+      state,
+      skillStatuses: discovery.skillStatuses,
+      mcpStatuses: discovery.mcpStatuses,
+      docStatuses: discovery.docStatuses,
+      globalConfigStatus: discovery.globalConfigStatus,
+      flags,
+      isGlobal,
+    });
+    const review = await wizard.reviewPlan({
+      planText: formatWizardPlan(plan, { scope, isGlobal, flags }),
+      backSections: reviewSections,
+    });
+
+    if (review.decision === 'cancel') {
+      return { cancelled: true };
+    }
+
+    if (review.decision === 'back') {
+      section = review.section;
+      continue;
+    }
+
+    logger(`Selected: ${selectedAgents.map((agentId) => AGENTS[agentId]?.name ?? agentId).join(', ') || 'none'}\n`);
+    return {
+      cancelled: false,
+      plan,
+      discovery,
+    };
+  }
+}
+
+function applySkillPlan(plan, discovery, options = {}) {
+  const {
+    cwd = process.cwd(),
+    home = homedir(),
+    logger = log,
+  } = options;
+  let installed = 0;
+  let updated = 0;
+  let current = 0;
+  let skipped = 0;
+  const skillResults = [];
+
+  if (plan.skillPlan.some((item) => item.action === 'install' || item.action === 'update')) {
+    logger(`Installing to ${plan.selectedAgents.length > 0 ? 'selected' : 'no'} ${options.scope ?? 'local'} skills...\n`);
+  }
+
+  for (const item of plan.skillPlan) {
+    const agentName = AGENTS[item.agentId]?.name ?? item.agentId;
+    const targetSkillsDir = getTargetSkillsDir(item.agentId, options.scope ?? 'local', { cwd, home });
+    process.stdout.write(`  ${agentName}: `);
+
+    if (item.action === 'current') {
+      logger('already up to date');
+      current++;
+      skillResults.push({ agentId: item.agentId, status: 'current' });
+      continue;
+    }
+
+    if (item.action === 'skip') {
+      logger('skipped');
+      skipped++;
+      skillResults.push({ agentId: item.agentId, status: 'skipped', reason: item.currentStatus });
+      continue;
+    }
+
+    const result = copySkill(discovery.packagedSkill.sourceDir, targetSkillsDir);
+    if (result.success) {
+      if (item.action === 'install') {
+        logger('installed');
+        installed++;
+        skillResults.push({ agentId: item.agentId, status: 'installed' });
+      } else {
+        logger('updated');
+        updated++;
+        skillResults.push({ agentId: item.agentId, status: 'updated' });
+      }
+    } else {
+      logger(`failed (${result.reason})`);
+      skipped++;
+      skillResults.push({ agentId: item.agentId, status: 'failed', reason: result.reason });
+    }
+  }
+
+  return { installed, updated, current, skipped, skillResults };
+}
+
+function applyMcpPlan(plan, scope, options = {}) {
+  const {
+    cwd = process.cwd(),
+    home = homedir(),
+    logger = log,
+  } = options;
+  const results = [];
+  for (const item of plan.mcpPlan) {
+    if (item.action === 'configured') {
+      results.push({ agentId: item.agentId, status: 'configured', targetPaths: item.targetPaths });
+      continue;
+    }
+
+    if (item.action === 'configure') {
+      results.push(configureMcpForAgent(item.agentId, scope, { cwd, home, logger }));
+      continue;
+    }
+
+    printManualMcpInstructions(item.agentId, scope, { cwd, home, logger });
+    results.push({
+      agentId: item.agentId,
+      status: item.action === 'manual' ? 'manual' : 'skipped',
+      targetPaths: item.targetPaths,
+    });
+  }
+  return results;
+}
+
 export function checkUpgrades(logger = log) {
   logger(`Checking ${SKILL_NAME} skill installations...\n`);
 
@@ -1146,12 +1969,11 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
   const { flags, targetAgent } = parsed;
   const scope = getScope(flags);
   const isGlobal = scope === 'global';
-  const force = flags.force;
   const cwd = runtimeOptions.cwd ?? process.cwd();
   const home = runtimeOptions.home ?? homedir();
   const interactive = runtimeOptions.interactive ?? isInteractive();
-  const prompt = runtimeOptions.prompt ?? promptText;
   const promptConfirm = runtimeOptions.promptConfirm ?? promptYesNo;
+  const wizard = runtimeOptions.wizard ?? createInteractiveWizard();
   
   // Self location
   const selfPath = join(cwd, 'skills', SKILL_NAME);
@@ -1177,33 +1999,96 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
   const detectedAgents = resolveDetectedAgents({ targetAgent, scope, options: { cwd, home } });
   let selectedAgents = detectedAgents;
 
-  if (!isGlobal && !targetAgent && interactive) {
-    const choice = await chooseProjectAgents({
-      prompt,
-      logger: log,
-      detectedAgentIds: detectedAgents,
-      orderedAgentIds: listAgentIds(),
-    });
-
-    if (choice.cancelled) {
-      return { detectedAgents, selectedAgents: [], installed: 0, skipped: 0, scope, didUpdateDocs: false };
-    }
-
-    selectedAgents = choice.selectedAgentIds;
-  } else if (!isGlobal && !targetAgent && !interactive) {
+  if (!isGlobal && !targetAgent && !interactive) {
     log('Interactive agent selection skipped because no TTY is available. Using detected local agents.');
   }
-  
+
+  if (interactive) {
+    const wizardResult = await runInteractiveInitWizard({
+      wizard,
+      detectedAgents,
+      initialSelectedAgents: selectedAgents,
+      targetAgent,
+      isGlobal,
+      flags,
+      scope,
+      cwd,
+      home,
+      logger: log,
+    });
+
+    if (wizardResult.cancelled) {
+      return { detectedAgents, selectedAgents: [], installed: 0, updated: 0, current: 0, skipped: 0, scope, didUpdateDocs: false, skillResults: [], mcpResults: [], globalConfigResult: { action: 'cancelled', filePath: getGlobalConfigPath(home), reason: 'cancelled' } };
+    }
+
+    selectedAgents = wizardResult.plan.selectedAgents;
+    if (selectedAgents.length === 0) {
+      log('No supported AI agents selected.');
+      log(`\nSupported: ${Object.keys(AGENTS).join(', ')}`);
+      log(`\nManual install: npx -y ${NPX_PACKAGE_SPEC} init -a <agent-name>`);
+    }
+
+    const skillApply = applySkillPlan(wizardResult.plan, wizardResult.discovery, { cwd, home, scope, logger: log });
+    log(`\nDone: ${skillApply.installed} installed, ${skillApply.updated} updated, ${skillApply.current} current, ${skillApply.skipped} skipped`);
+    log(`\nRegister ragi with your MCP host using:`);
+    log(`  { "mcpServers": { "ragi": { "command": "npx", "args": ["-y", "${NPX_PACKAGE_SPEC}"] } } }`);
+    printExistingProjectOverrideNotes(selectedAgents, cwd, log);
+    const mcpResults = applyMcpPlan(wizardResult.plan, scope, { cwd, home, logger: log });
+
+    let globalConfigResult = { action: 'unchanged', filePath: getGlobalConfigPath(home), reason: null };
+    if (wizardResult.plan.globalConfigPlan.action === 'create' || wizardResult.plan.globalConfigPlan.action === 'replace') {
+      const config = buildGlobalConfigFromPreset(wizardResult.plan.globalConfigPlan.preset, {
+        model: wizardResult.plan.globalConfigPlan.model,
+      });
+      const filePath = scaffoldGlobalConfig({ home, config });
+      log(`  Updated: ${filePath}`);
+      globalConfigResult = {
+        action: wizardResult.plan.globalConfigPlan.action === 'create' ? 'created' : 'replaced',
+        filePath,
+        reason: null,
+      };
+    } else if (wizardResult.plan.globalConfigPlan.action === 'skip') {
+      globalConfigResult = {
+        action: 'skipped',
+        filePath: getGlobalConfigPath(home),
+        reason: wizardResult.discovery.globalConfigStatus.reason ?? 'declined',
+      };
+    }
+
+    let didUpdateDocs = false;
+    if (isGlobal) {
+      log('\nGlobal install does not edit project docs. Re-run without `--global` in a project to update `AGENTS.md`/`CLAUDE.md`.');
+    } else if (!flags.noDocs) {
+      const targetFiles = wizardResult.plan.docsPlan
+        .filter((item) => item.action === 'create' || item.action === 'update')
+        .map((item) => item.fileName);
+      if (targetFiles.length > 0) {
+        await updateDocsInCwd({ cwd, targetFiles });
+        didUpdateDocs = true;
+      }
+    }
+
+    return {
+      detectedAgents,
+      selectedAgents,
+      installed: skillApply.installed,
+      updated: skillApply.updated,
+      current: skillApply.current,
+      skipped: skillApply.skipped,
+      skillResults: skillApply.skillResults,
+      scope,
+      didUpdateDocs,
+      globalConfigResult,
+      mcpResults,
+    };
+  }
+
   if (selectedAgents.length === 0) {
     log('No supported AI agents detected.');
     log(`\nSupported: ${Object.keys(AGENTS).join(', ')}`);
-  log(`\nManual install: npx -y ${NPX_PACKAGE_SPEC} init -a <agent-name>`);
+    log(`\nManual install: npx -y ${NPX_PACKAGE_SPEC} init -a <agent-name>`);
   } else {
-    if (!isGlobal && !targetAgent && interactive) {
-      log(`Selected: ${selectedAgents.map(a => AGENTS[a].name).join(', ')}\n`);
-    } else {
-      log(`Detected: ${selectedAgents.map(a => AGENTS[a].name).join(', ')}\n`);
-    }
+    log(`Detected: ${selectedAgents.map(a => AGENTS[a].name).join(', ')}\n`);
   }
 
   let installed = 0;
@@ -1223,15 +2108,9 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
     const staleStatuses = [...outdated, ...invalid];
     let updateStatuses = [];
 
-    if (force) {
+    if (flags.force) {
       updateStatuses = staleStatuses;
-    } else if (interactive && staleStatuses.length > 0) {
-      const staleAgentNames = staleStatuses.map((status) => AGENTS[status.agentId]?.name ?? status.agentId).join(', ');
-      const shouldUpdate = await promptConfirm(`Update installed ragi skill for ${staleAgentNames}? (y/N) `, false);
-      if (shouldUpdate) {
-        updateStatuses = staleStatuses;
-      }
-    } else if (!interactive && staleStatuses.length > 0) {
+    } else if (staleStatuses.length > 0) {
       log(`Skill updates available for ${staleStatuses.map((status) => AGENTS[status.agentId]?.name ?? status.agentId).join(', ')}. Re-run with --force to overwrite.`);
     }
 
@@ -1275,19 +2154,9 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
         continue;
       }
 
-      if (status.status === 'outdated') {
-        log(force ? 'updated' : 'skipped (update available, use --force or confirm prompt)');
-        skipped++;
-        skillResults.push({ agentId, status: 'skipped', reason: 'outdated' });
-        continue;
-      }
-
-      if (status.status === 'invalid') {
-        log(force ? 'updated' : `skipped (installed skill is unreadable${status.reason ? `: ${status.reason}` : ''})`);
-        skipped++;
-        skillResults.push({ agentId, status: 'skipped', reason: 'invalid' });
-        continue;
-      }
+      log(`skipped (${status.status})`);
+      skipped++;
+      skillResults.push({ agentId, status: 'skipped', reason: status.status });
     }
 
     if (currentStatuses.length > 0 && missing.length === 0 && updateStatuses.length === 0) {
@@ -1309,24 +2178,6 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
     if (needsAttention.length === 0) {
       log('All selected agents already have ragi MCP registered.');
       mcpResults = mcpStatuses;
-    } else if (interactive) {
-      const shouldConfigureMcp = await promptConfirm('Register `ragi` as an MCP server for the selected agent(s) that still need setup? (Y/n) ', true);
-      if (shouldConfigureMcp) {
-        const actionableAgentIds = actionable.map((status) => status.agentId);
-        const unknownAgentIds = unknown.map((status) => status.agentId);
-        const configuredResults = actionableAgentIds.length > 0
-          ? configureMcpForAgents(actionableAgentIds, scope, { cwd, home, logger: log })
-          : [];
-        for (const agentId of unknownAgentIds) {
-          printManualMcpInstructions(agentId, scope, { cwd, home, logger: log });
-        }
-        mcpResults = [...mcpStatuses.filter((status) => status.status === 'configured'), ...configuredResults, ...unknown];
-      } else {
-        for (const agentId of needsAttention.map((status) => status.agentId)) {
-          printManualMcpInstructions(agentId, scope, { cwd, home, logger: log });
-        }
-        mcpResults = mcpStatuses;
-      }
     } else {
       log('Interactive MCP setup skipped because no TTY is available.');
       for (const agentId of needsAttention.map((status) => status.agentId)) {
@@ -1338,17 +2189,17 @@ export async function runInit(parsed = parseArgs(), runtimeOptions = {}) {
 
   if (isGlobal) {
     log('\nGlobal install does not edit project docs. Re-run without `--global` in a project to update `AGENTS.md`/`CLAUDE.md`.');
-    const globalConfigResult = await maybeScaffoldGlobalConfig({ home, interactive, prompt: promptConfirm, logger: log });
+    const globalConfigResult = await maybeScaffoldGlobalConfig({ home, interactive: false, prompt: promptConfirm, logger: log });
     return { detectedAgents, selectedAgents, installed, updated, current, skipped, skillResults, scope, didUpdateDocs: false, globalConfigResult, mcpResults };
   }
 
-  const globalConfigResult = await maybeScaffoldGlobalConfig({ home, interactive, prompt: promptConfirm, logger: log });
+  const globalConfigResult = await maybeScaffoldGlobalConfig({ home, interactive: false, prompt: promptConfirm, logger: log });
 
   if (flags.noDocs) {
     return { detectedAgents, selectedAgents, installed, updated, current, skipped, skillResults, scope, didUpdateDocs: false, globalConfigResult, mcpResults };
   }
 
-  await updateDocsInCwd();
+  await updateDocsInCwd({ interactive: false });
   return { detectedAgents, selectedAgents, installed, updated, current, skipped, skillResults, scope, didUpdateDocs: true, globalConfigResult, mcpResults };
 }
 

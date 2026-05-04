@@ -3,9 +3,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  buildGlobalConfigFromPreset,
   buildRagiInstructionBlock,
   chooseProjectAgents,
   configureMcpForAgent,
+  formatWizardPlan,
+  getInteractiveAgentGroups,
+  getInteractiveMcpGroups,
+  getMcpFollowUpInstructions,
   getGlobalConfigPath,
   getGlobalConfigStatus,
   getMcpRegistrationStatus,
@@ -24,6 +29,37 @@ const DOC_BLOCK_BEGIN = '<!-- RAGI:BEGIN -->';
 const blockText = buildRagiInstructionBlock();
 const REPO_ROOT = process.cwd();
 const SOURCE_SKILL_CONTENT = readFileSync(join(REPO_ROOT, 'skills', 'ragi', 'SKILL.md'), 'utf-8');
+
+function createWizardStub(overrides = {}) {
+  return {
+    pickAgents: async ({ detectedAgentIds }) => ({
+      cancelled: false,
+      selectedAgentIds: detectedAgentIds,
+    }),
+    pickSkillActions: async ({ skillStatuses }) => Object.fromEntries(skillStatuses.map((status) => {
+      if (status.status === 'missing') return [status.agentId, 'install'];
+      if (status.status === 'outdated' || status.status === 'invalid') return [status.agentId, 'update'];
+      return [status.agentId, 'current'];
+    })),
+    pickMcpActions: async ({ mcpStatuses }) => Object.fromEntries(mcpStatuses.map((status) => {
+      if (status.status === 'configured') return [status.agentId, 'configured'];
+      if (status.status === 'unknown') return [status.agentId, 'manual'];
+      return [status.agentId, 'configure'];
+    })),
+    pickDocActions: async ({ docStatuses }) => Object.fromEntries(docStatuses.map((status) => {
+      if (status.status === 'missing') return [status.fileName, 'create'];
+      if (status.status === 'outdated') return [status.fileName, 'update'];
+      return [status.fileName, 'unchanged'];
+    })),
+    pickGlobalConfig: async ({ globalConfigStatus, currentPreset = 'transformers_js', currentModel = '' }) => (
+      globalConfigStatus.valid
+        ? { action: 'unchanged', preset: currentPreset, model: currentModel }
+        : { action: globalConfigStatus.exists ? 'replace' : 'skip', preset: currentPreset, model: currentModel }
+    ),
+    reviewPlan: async () => ({ decision: 'apply' }),
+    ...overrides,
+  };
+}
 
 function captureConsole(fn) {
   const logs = [];
@@ -119,6 +155,17 @@ async function testUpsertTomlMcpConfig() {
   assert.ok(updated.includes('args = ["-y", "@susutawar/ragi@latest"]'));
 }
 
+async function testUpsertGooseYamlMcpConfig() {
+  const updated = upsertMcpConfigFile('extensions:\n  existing:\n    cmd: node\n', {
+    kind: 'yaml',
+    snippetKind: 'goose-yaml',
+  });
+
+  assert.ok(updated.includes('extensions:'));
+  assert.ok(updated.includes('  ragi:'));
+  assert.ok(updated.includes('    args: [-y, @susutawar/ragi@latest]'));
+}
+
 async function testParseAgentSelection() {
   const parsed = parseAgentSelection('1, 3, 3,5', ['opencode', 'claude-code', 'cursor', 'roo', 'codex']);
   assert.equal(parsed.ok, true);
@@ -164,6 +211,58 @@ async function testChooseProjectAgentsUsesDetectedDefaults() {
   assert.equal(choice.usedDetectedDefaults, true);
 }
 
+async function testInteractiveAgentGroupsCollapseSharedAgentsDirectory() {
+  const groups = getInteractiveAgentGroups({
+    orderedAgentIds: ['opencode', 'claude-code', 'cursor', 'goose', 'cline', 'codex'],
+  });
+
+  assert.equal(groups[0].id, 'shared-agents-skills');
+  assert.deepEqual(groups[0].agentIds, ['opencode', 'cursor', 'cline', 'codex']);
+  assert.ok(groups[0].label.includes('.agents/skills'));
+  assert.deepEqual(groups.slice(1).map((group) => group.id), ['claude-code', 'goose']);
+}
+
+async function testInteractiveMcpGroupsCollapseSharedTarget() {
+  const groups = getInteractiveMcpGroups([
+    {
+      agentId: 'cursor',
+      status: 'missing',
+      target: { kind: 'json' },
+      targetPaths: ['C:\\fake-home\\.cursor\\mcp.json'],
+    },
+    {
+      agentId: 'cline',
+      status: 'missing',
+      target: { kind: 'json' },
+      targetPaths: ['C:\\fake-home\\.cursor\\mcp.json'],
+    },
+    {
+      agentId: 'roo',
+      status: 'unknown',
+      target: { kind: 'manual' },
+      targetPaths: ['Roo Code MCP settings (see Roo Code docs / extension UI)'],
+      reason: 'manual-only',
+    },
+  ]);
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].agentIds, ['cursor', 'cline']);
+  assert.ok(groups[0].label.includes('configure automatically'));
+  assert.ok(groups[1].label.includes('show manual instructions'));
+}
+
+async function testMcpFollowUpInstructions() {
+  const claude = getMcpFollowUpInstructions('claude-code', 'local');
+  assert.ok(claude.command?.includes('claude mcp add'));
+
+  const goose = getMcpFollowUpInstructions('goose', 'global');
+  assert.equal(goose.command, null);
+  assert.ok(goose.note?.includes('Restart Goose'));
+
+  const cursor = getMcpFollowUpInstructions('cursor', 'local');
+  assert.ok(cursor.note?.includes('Restart Cursor'));
+}
+
 async function testConfigureMcpForAgentByScope() {
   await withTempDir(async (tempDir) => {
     const fakeHome = join(tempDir, 'home');
@@ -185,12 +284,13 @@ async function testConfigureMcpForAgentByScope() {
     assert.equal(codexGlobal.status, 'configured');
     assert.ok(existsSync(join(fakeHome, '.codex', 'config.toml')));
 
-    const gooseManual = configureMcpForAgent('goose', 'global', {
+    const gooseGlobal = configureMcpForAgent('goose', 'global', {
       cwd: tempDir,
       home: fakeHome,
       logger: () => {},
     });
-    assert.equal(gooseManual.status, 'manual');
+    assert.equal(gooseGlobal.status, 'configured');
+    assert.ok(existsSync(join(fakeHome, '.config', 'goose', 'config.yaml')));
   });
 }
 
@@ -215,11 +315,22 @@ async function testGetMcpRegistrationStatus() {
     });
     assert.equal(configured.status, 'configured');
 
-    const manual = getMcpRegistrationStatus('goose', 'global', {
+    const gooseMissing = getMcpRegistrationStatus('goose', 'global', {
       cwd: tempDir,
       home: fakeHome,
     });
-    assert.equal(manual.status, 'unknown');
+    assert.equal(gooseMissing.status, 'missing');
+
+    configureMcpForAgent('goose', 'global', {
+      cwd: tempDir,
+      home: fakeHome,
+      logger: () => {},
+    });
+    const gooseConfigured = getMcpRegistrationStatus('goose', 'global', {
+      cwd: tempDir,
+      home: fakeHome,
+    });
+    assert.equal(gooseConfigured.status, 'configured');
   });
 }
 
@@ -343,9 +454,7 @@ async function testCurrentSkillIsSkippedAsUpToDate() {
     const parsed = parseArgs(['-a=opencode', '--no-docs']);
     const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async () => {
-        throw new Error('promptConfirm should not be called for current skills');
-      },
+      wizard: createWizardStub(),
       home: fakeHome,
     }));
 
@@ -366,7 +475,7 @@ async function testOutdatedSkillPromptsAndUpdates() {
     const parsed = parseArgs(['-a=opencode', '--no-docs']);
     const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async (question) => question.startsWith('Update installed ragi skill'),
+      wizard: createWizardStub(),
       home: fakeHome,
     }));
 
@@ -436,7 +545,7 @@ async function testInvalidSkillIsTreatedAsUpdateNeeded() {
     }));
 
     assert.equal(result.skipped, 1);
-    assert.ok(logs.some((line) => line.includes('installed skill is unreadable')));
+    assert.ok(logs.some((line) => line.includes('skipped (invalid)')));
   });
 }
 
@@ -444,11 +553,12 @@ async function testLocalInteractiveInitChoosesMultipleAgents() {
   await withTempDir(async (tempDir) => {
     const fakeHome = join(tempDir, 'home');
     const parsed = parseArgs([]);
-    const prompts = ['1,3'];
     const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      prompt: async () => prompts.shift() ?? '',
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickAgents: async () => ({ cancelled: false, selectedAgentIds: ['opencode', 'cursor'] }),
+        pickGlobalConfig: async () => ({ action: 'skip', preset: 'transformers_js', model: '' }),
+      }),
       home: fakeHome,
     }));
 
@@ -457,7 +567,8 @@ async function testLocalInteractiveInitChoosesMultipleAgents() {
     assert.equal(result.didUpdateDocs, true);
     assert.equal(result.globalConfigResult.action, 'skipped');
     assert.ok(logs.some((line) => line.includes('Selected: OpenCode, Cursor')));
-    assert.ok(logs.some((line) => line.includes('configure MCP manually')));
+    assert.ok(existsSync(join(fakeHome, '.config', 'opencode', 'opencode.json')));
+    assert.ok(existsSync(join(fakeHome, '.cursor', 'mcp.json')));
   });
 }
 
@@ -468,8 +579,9 @@ async function testLocalInteractiveInitUsesDetectedDefaults() {
     const parsed = parseArgs([]);
     const { result } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      prompt: async () => '',
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickGlobalConfig: async () => ({ action: 'skip', preset: 'transformers_js', model: '' }),
+      }),
       home: fakeHome,
     }));
 
@@ -483,15 +595,17 @@ async function testLocalInteractiveInitCancelsWithoutDefaults() {
   await withTempDir(async (tempDir) => {
     const fakeHome = join(tempDir, 'home');
     const parsed = parseArgs([]);
-    const { result, logs } = await captureConsole(() => runInit(parsed, {
+    const { result } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      prompt: async () => '',
+      wizard: createWizardStub({
+        pickAgents: async () => ({ cancelled: true, selectedAgentIds: [] }),
+      }),
       home: fakeHome,
     }));
 
     assert.equal(result.didUpdateDocs, false);
     assert.deepEqual(result.selectedAgents, []);
-    assert.ok(logs.some((line) => line.includes('No detected default agents.')));
+    assert.equal(result.globalConfigResult.action, 'cancelled');
   });
 }
 
@@ -548,11 +662,12 @@ async function testInteractiveMcpAcceptConfiguresSupportedAgents() {
   await withTempDir(async (tempDir) => {
     const fakeHome = join(tempDir, 'home');
     const parsed = parseArgs([]);
-    const prompts = ['1,3'];
-    const { result } = await captureConsole(() => runInit(parsed, {
+    const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      prompt: async () => prompts.shift() ?? '',
-      promptConfirm: async () => true,
+      wizard: createWizardStub({
+        pickAgents: async () => ({ cancelled: false, selectedAgentIds: ['opencode', 'cursor'] }),
+        pickGlobalConfig: async () => ({ action: 'skip', preset: 'transformers_js', model: '' }),
+      }),
       home: fakeHome,
     }));
 
@@ -561,6 +676,8 @@ async function testInteractiveMcpAcceptConfiguresSupportedAgents() {
     assert.ok(existsSync(join(fakeHome, '.cursor', 'mcp.json')));
     assert.ok(!existsSync(join(tempDir, 'opencode.json')));
     assert.ok(!existsSync(join(tempDir, '.cursor', 'mcp.json')));
+    assert.ok(logs.some((line) => line.includes('Restart OpenCode')));
+    assert.ok(logs.some((line) => line.includes('Restart Cursor')));
   });
 }
 
@@ -577,15 +694,12 @@ async function testInteractiveInitSkipsMcpPromptWhenAlreadyConfigured() {
     const parsed = parseArgs(['-a=cursor', '--no-docs']);
     const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async () => {
-        throw new Error('promptConfirm should not be called when MCP is already configured');
-      },
+      wizard: createWizardStub(),
       home: fakeHome,
     }));
 
     assert.equal(result.mcpResults[0].status, 'configured');
-    assert.ok(logs.some((line) => line.includes('MCP already registered for: Cursor')));
-    assert.ok(logs.some((line) => line.includes('All selected agents already have ragi MCP registered.')));
+    assert.ok(logs.some((line) => line.includes('Selected: Cursor')));
   });
 }
 
@@ -593,15 +707,17 @@ async function testInteractiveInitOnlyPrintsManualForUnknownMcpStatus() {
   await withTempDir(async (tempDir) => {
     const fakeHome = join(tempDir, 'home');
     const parsed = parseArgs([]);
-    const prompts = ['2,6'];
     const { logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      prompt: async () => prompts.shift() ?? '',
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickAgents: async () => ({ cancelled: false, selectedAgentIds: ['claude-code', 'roo'] }),
+        pickGlobalConfig: async () => ({ action: 'skip', preset: 'transformers_js', model: '' }),
+      }),
       home: fakeHome,
     }));
 
-    assert.ok(logs.some((line) => line.includes('MCP status could not be verified automatically for: Claude Code, Goose')));
+    assert.ok(logs.some((line) => line.includes('Claude Code: configure MCP manually.')));
+    assert.ok(logs.some((line) => line.includes('Roo Code: configure MCP manually.')));
   });
 }
 
@@ -611,7 +727,9 @@ async function testInteractiveMcpDeclinePrintsInstructions() {
     const parsed = parseArgs(['-a=cursor', '--no-docs']);
     const { logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickMcpActions: async ({ mcpStatuses }) => Object.fromEntries(mcpStatuses.map((status) => [status.agentId, status.status === 'configured' ? 'configured' : 'skip'])),
+      }),
       home: fakeHome,
     }));
 
@@ -626,7 +744,9 @@ async function testGlobalInitMcpPromptBypassesDocs() {
     const parsed = parseArgs(['--global', '-a=cursor']);
     const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickGlobalConfig: async () => ({ action: 'skip', preset: 'transformers_js', model: '' }),
+      }),
       home: fakeHome,
     }));
 
@@ -639,15 +759,15 @@ async function testGlobalInitMcpPromptBypassesDocs() {
 async function testManualOnlyMcpAgentPrintsInstructions() {
   await withTempDir(async (tempDir) => {
     const fakeHome = join(tempDir, 'home');
-    const parsed = parseArgs(['-a=goose', '--no-docs']);
+    const parsed = parseArgs(['-a=roo', '--no-docs']);
     const { logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async () => true,
+      wizard: createWizardStub(),
       home: fakeHome,
     }));
 
-    assert.ok(logs.some((line) => line.includes('Goose: configure MCP manually.')));
-    assert.ok(logs.some((line) => line.includes('~/.config/goose/config.yaml')));
+    assert.ok(logs.some((line) => line.includes('Roo Code: configure MCP manually.')));
+    assert.ok(logs.some((line) => line.includes('Roo Code MCP settings')));
   });
 }
 
@@ -659,7 +779,9 @@ async function testExistingProjectOverridesAreLeftUntouched() {
     const parsed = parseArgs(['-a=cursor', '--no-docs']);
     const { logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickMcpActions: async ({ mcpStatuses }) => Object.fromEntries(mcpStatuses.map((status) => [status.agentId, 'skip'])),
+      }),
       home: fakeHome,
     }));
 
@@ -674,8 +796,11 @@ async function testExplicitAgentInstallsWithoutDetection() {
     const parsed = parseArgs(['-a=codex', '--force', '--no-docs']);
     const { result, logs } = await captureConsole(() => runInit(parsed, {
       interactive: true,
-      prompt: async () => '1,2',
-      promptConfirm: async () => false,
+      wizard: createWizardStub({
+        pickAgents: async () => {
+          throw new Error('pickAgents should not be called for explicit agent installs');
+        },
+      }),
       home: fakeHome,
     }));
     assert.ok(result.detectedAgents.includes('codex'));
@@ -684,13 +809,136 @@ async function testExplicitAgentInstallsWithoutDetection() {
   });
 }
 
+async function testUpdateMcpScriptExistsInPackageScripts() {
+  const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8'));
+  assert.equal(packageJson.scripts['mcp:update'], 'node scripts/update-mcp.mjs');
+}
+
+async function testInteractiveReviewBackRevisitsConfigChoice() {
+  await withTempDir(async (tempDir) => {
+    const fakeHome = join(tempDir, 'home');
+    const parsed = parseArgs(['-a=cursor', '--no-docs']);
+    let reviewCalls = 0;
+
+    const { result } = await captureConsole(() => runInit(parsed, {
+      interactive: true,
+      wizard: createWizardStub({
+        pickGlobalConfig: async ({ currentPreset }) => (
+          reviewCalls === 0
+            ? { action: 'create', preset: 'ollama', model: '' }
+            : { action: 'create', preset: 'transformers_js', model: currentPreset }
+        ),
+        reviewPlan: async ({ planText }) => {
+          reviewCalls += 1;
+          if (reviewCalls === 1) {
+            assert.ok(planText.includes('ollama'));
+            return { decision: 'back', section: 'config' };
+          }
+          assert.ok(planText.includes('transformers_js'));
+          return { decision: 'apply' };
+        },
+      }),
+      home: fakeHome,
+    }));
+
+    assert.equal(result.globalConfigResult.action, 'created');
+    const written = JSON.parse(readFileSync(getGlobalConfigPath(fakeHome), 'utf-8'));
+    assert.equal(written.embedding.provider, 'transformers_js');
+  });
+}
+
+async function testInteractiveCancelBeforeApplyMakesNoChanges() {
+  await withTempDir(async (tempDir) => {
+    const fakeHome = join(tempDir, 'home');
+    const parsed = parseArgs(['-a=cursor']);
+    const { result } = await captureConsole(() => runInit(parsed, {
+      interactive: true,
+      wizard: createWizardStub({
+        reviewPlan: async () => ({ decision: 'cancel' }),
+      }),
+      home: fakeHome,
+    }));
+
+    assert.equal(result.globalConfigResult.action, 'cancelled');
+    assert.ok(!existsSync(join(fakeHome, '.cursor', 'mcp.json')));
+    assert.ok(!existsSync(getGlobalConfigPath(fakeHome)));
+    assert.ok(!existsSync(join(process.cwd(), 'AGENTS.md')));
+  });
+}
+
+async function testInteractiveMixedSkillAndMcpActions() {
+  await withTempDir(async (tempDir) => {
+    const fakeHome = join(tempDir, 'home');
+    mkdirSync(join(tempDir, '.agents', 'skills', 'ragi'), { recursive: true });
+    writeFileSync(join(tempDir, '.agents', 'skills', 'ragi', 'SKILL.md'), 'old skill content\n');
+    const parsed = parseArgs([]);
+
+    const { result } = await captureConsole(() => runInit(parsed, {
+      interactive: true,
+      wizard: createWizardStub({
+        pickAgents: async () => ({ cancelled: false, selectedAgentIds: ['opencode', 'cursor'] }),
+        pickSkillActions: async () => ({ opencode: 'skip', cursor: 'install' }),
+        pickMcpActions: async () => ({ opencode: 'skip', cursor: 'configure' }),
+        pickGlobalConfig: async () => ({ action: 'skip', preset: 'transformers_js', model: '' }),
+      }),
+      home: fakeHome,
+    }));
+
+    assert.equal(result.installed, 1);
+    assert.equal(result.skipped >= 1, true);
+    assert.ok(existsSync(join(tempDir, '.agents', 'skills', 'ragi', 'SKILL.md')));
+    assert.ok(existsSync(join(fakeHome, '.cursor', 'mcp.json')));
+    assert.ok(!existsSync(join(fakeHome, '.config', 'opencode', 'opencode.json')));
+  });
+}
+
+async function testProviderPresetScaffoldsChosenConfig() {
+  const ollama = buildGlobalConfigFromPreset('ollama');
+  assert.equal(ollama.embedding.provider, 'ollama');
+  assert.equal(ollama.embedding.model, 'nomic-embed-text');
+
+  const llamaCpp = buildGlobalConfigFromPreset('llama_cpp', { model: 'custom-embed-model' });
+  assert.equal(llamaCpp.embedding.provider, 'llama_cpp');
+  assert.equal(llamaCpp.embedding.model, 'custom-embed-model');
+}
+
+async function testFormatWizardPlanIncludesManualAndDocsSummary() {
+  const text = formatWizardPlan({
+    selectedAgents: ['cursor', 'goose'],
+    skillPlan: [
+      { agentId: 'cursor', action: 'install' },
+      { agentId: 'goose', action: 'skip' },
+    ],
+    mcpPlan: [
+      { agentId: 'cursor', action: 'configure' },
+      { agentId: 'goose', action: 'manual' },
+    ],
+    docsPlan: [
+      { fileName: 'AGENTS.md', action: 'create' },
+    ],
+    globalConfigPlan: {
+      action: 'create',
+      preset: 'transformers_js',
+      model: '',
+    },
+  }, { scope: 'local', isGlobal: false, flags: {} });
+
+  assert.ok(text.includes('Cursor -> install'));
+  assert.ok(text.includes('Goose -> manual'));
+  assert.ok(text.includes('AGENTS.md -> create'));
+}
+
 async function run() {
   await testUpsertMarkedBlock();
   await testUpsertJsonMcpConfig();
   await testUpsertTomlMcpConfig();
+  await testUpsertGooseYamlMcpConfig();
   await testParseAgentSelection();
   await testChooseProjectAgentsMultipleSelection();
   await testChooseProjectAgentsUsesDetectedDefaults();
+  await testInteractiveAgentGroupsCollapseSharedAgentsDirectory();
+  await testInteractiveMcpGroupsCollapseSharedTarget();
+  await testMcpFollowUpInstructions();
   await testConfigureMcpForAgentByScope();
   await testGetMcpRegistrationStatus();
   await testGlobalConfigStatusAndScaffold();
@@ -718,6 +966,12 @@ async function run() {
   await testManualOnlyMcpAgentPrintsInstructions();
   await testExistingProjectOverridesAreLeftUntouched();
   await testExplicitAgentInstallsWithoutDetection();
+  await testUpdateMcpScriptExistsInPackageScripts();
+  await testInteractiveReviewBackRevisitsConfigChoice();
+  await testInteractiveCancelBeforeApplyMakesNoChanges();
+  await testInteractiveMixedSkillAndMcpActions();
+  await testProviderPresetScaffoldsChosenConfig();
+  await testFormatWizardPlanIncludesManualAndDocsSummary();
 }
 
 try {

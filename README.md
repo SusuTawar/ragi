@@ -43,6 +43,9 @@ npx -y @susutawar/ragi@latest init --global
 
 # Check installations
 npx -y @susutawar/ragi@latest init --check
+
+# Refresh MCP definitions to the current @latest package spec
+npm run mcp:update
 ```
 
 `npx -y @susutawar/ragi@latest init` now:
@@ -54,6 +57,8 @@ npx -y @susutawar/ragi@latest init --check
 - falls back to printing manual MCP registration instructions for unsupported agents.
 
 `--force` overwrites outdated installed skills during `init`. Without `--force`, interactive runs ask before updating and non-interactive runs leave stale installs untouched.
+
+After `init` edits a writable MCP config, restart that host so it reloads the updated definition. For manual hosts, `init` now prints the exact next command or UI step to finish setup.
 
 ## Configuration
 
